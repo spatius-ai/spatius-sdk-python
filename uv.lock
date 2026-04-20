@@ -184,7 +184,7 @@ wheels = [
 ]
 
 [[package]]
-name = "avatarkit"
+name = "spatius-sdk-python"
 version = "0.1.7"
 source = { editable = "." }
 dependencies = [

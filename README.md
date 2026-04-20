@@ -5,13 +5,13 @@ A Python SDK for connecting to avatar services via WebSocket, supporting audio s
 ## Installation
 
 ```bash
-pip install avatarkit
+pip install spatius-sdk-python
 ```
 
 To enable the built-in PCM-to-Ogg-Opus encoder, install the optional `opus` extra:
 
 ```bash
-pip install "avatarkit[opus]"
+pip install "spatius-sdk-python[opus]"
 ```
 
 The optional encoder uses `opuslib`, which requires a working `libopus` runtime on the
@@ -23,7 +23,7 @@ host system.
 import asyncio
 from datetime import datetime, timedelta, timezone
 
-from avatarkit import AudioFormat, new_avatar_session
+from spatius_sdk_python import AudioFormat, new_avatar_session
 
 async def main():
     # Create session
@@ -68,7 +68,7 @@ The SDK provides two ways to configure a session:
 #### Option 1: Using `new_avatar_session()` (Recommended)
 
 ```python
-from avatarkit import AudioFormat, new_avatar_session
+from spatius_sdk_python import AudioFormat, new_avatar_session
 
 session = new_avatar_session(
     avatar_id="avatar-123",
@@ -91,7 +91,7 @@ session = new_avatar_session(
 #### Option 2: Using Configuration Builder
 
 ```python
-from avatarkit import SessionConfigBuilder, AvatarSession
+from spatius_sdk_python import SessionConfigBuilder, AvatarSession
 
 config = (SessionConfigBuilder()
     .with_avatar_id("avatar-123")
@@ -140,7 +140,7 @@ The SDK supports two session-level input formats:
 - Format: Raw PCM bytes
 
 ```python
-from avatarkit import AudioFormat
+from spatius_sdk_python import AudioFormat
 
 session = new_avatar_session(
     ...,
@@ -162,7 +162,7 @@ await session.send_audio(audio_data, end=True)
 - Request contract: each request ID must carry one continuous Ogg Opus stream across one or more `send_audio()` calls, and the final chunk must use `end=True`
 
 ```python
-from avatarkit import AudioFormat
+from spatius_sdk_python import AudioFormat
 
 session = new_avatar_session(
     ...,
@@ -184,7 +184,7 @@ If you want the session to negotiate `AudioFormat.OGG_OPUS` but still provide ra
 bytes to `send_audio()`, enable the optional internal encoder.
 
 ```python
-from avatarkit import AudioFormat, OggOpusEncoderConfig
+from spatius_sdk_python import AudioFormat, OggOpusEncoderConfig
 
 encoded_outputs = []
 
@@ -205,7 +205,7 @@ await session.send_audio(pcm_audio, end=True)
 
 Notes:
 
-- The internal encoder is optional; if you do not install `avatarkit[opus]`, keep using PCM or provide pre-encoded Ogg Opus bytes yourself.
+- The internal encoder is optional; if you do not install `spatius-sdk-python[opus]`, keep using PCM or provide pre-encoded Ogg Opus bytes yourself.
 - `on_encoded_audio` fires when internal encoding completes for a request and receives `(req_id, encoded_audio_bytes)`.
 - Advanced usage still works: if `audio_format=AudioFormat.OGG_OPUS` and `ogg_opus_encoder` is unset, `send_audio()` forwards your pre-encoded Ogg Opus bytes unchanged.
 
@@ -214,7 +214,7 @@ Notes:
 When configured with `livekit_egress`, audio and animation data are streamed to a LiveKit room via the egress service instead of being returned through the WebSocket connection.
 
 ```python
-from avatarkit import new_avatar_session, LiveKitEgressConfig
+from spatius_sdk_python import new_avatar_session, LiveKitEgressConfig
 
 session = new_avatar_session(
     avatar_id="avatar-123",
@@ -274,7 +274,7 @@ def on_frame_received(frame_data: bytes, is_last: bool):
 Handles errors from the session:
 
 ```python
-from avatarkit import AvatarSDKError
+from spatius_sdk_python import AvatarSDKError
 
 
 def on_error(error: Exception):
@@ -298,7 +298,7 @@ Use `SessionTokenError` for token creation failures and `AvatarSDKError` for all
 other structured SDK errors:
 
 ```python
-from avatarkit import AvatarSDKError, SessionTokenError
+from spatius_sdk_python import AvatarSDKError, SessionTokenError
 
 try:
     await session.init()
@@ -475,7 +475,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Clone and setup
 git clone <repository-url>
-cd avatar-sdk-python
+cd spatius-sdk-python
 uv sync --all-extras
 ```
 

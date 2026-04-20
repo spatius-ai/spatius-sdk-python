@@ -1,5 +1,5 @@
 #!/bin/bash
-# Local testing script for avatarkit
+# Local testing script for spatius-sdk-python
 # Tests across multiple Python versions and dependency combinations
 
 set -e

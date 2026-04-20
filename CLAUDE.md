@@ -30,7 +30,7 @@ cd proto && buf generate
 
 ## Architecture
 
-This is a Python SDK for WebSocket-based avatar services with audio streaming and animation frame reception. Published as `avatarkit` on PyPI.
+This is a Python SDK for WebSocket-based avatar services with audio streaming and animation frame reception. Published as `spatius-sdk-python` on PyPI.
 
 ### Core Components
 
@@ -74,7 +74,7 @@ To use LiveKit egress mode:
 4. The `transport_frames` callback will not be invoked since data goes to LiveKit
 
 ```python
-from avatarkit import new_avatar_session, LiveKitEgressConfig
+from spatius_sdk_python import new_avatar_session, LiveKitEgressConfig
 
 session = new_avatar_session(
     livekit_egress=LiveKitEgressConfig(
@@ -99,7 +99,7 @@ To use Agora egress mode:
 4. The `transport_frames` callback will not be invoked since data goes to Agora
 
 ```python
-from avatarkit import new_avatar_session, AgoraEgressConfig
+from spatius_sdk_python import new_avatar_session, AgoraEgressConfig
 
 session = new_avatar_session(
     agora_egress=AgoraEgressConfig(

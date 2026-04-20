@@ -23,7 +23,7 @@ class OggOpusStreamEncoder:
     _ALLOWED_FRAME_DURATIONS_MS = {10, 20, 40, 60}
     _APPLICATIONS = {"audio", "voip", "restricted_lowdelay"}
     _DEFAULT_PRE_SKIP = 312
-    _VENDOR = b"avatarkit"
+    _VENDOR = b"spatiussdk"
     _CRC_POLY = 0x04C11DB7
 
     def __init__(
@@ -257,7 +257,7 @@ class OggOpusStreamEncoder:
         except ImportError as exc:  # pragma: no cover - exercised by runtime users
             raise RuntimeError(
                 "Internal Ogg Opus encoding requires the optional opus dependency. "
-                "Install avatarkit[opus] to enable it."
+                "Install spatius-sdk-python[opus] to enable it."
             ) from exc
 
         encoder = opuslib.Encoder(sample_rate, 1, application)

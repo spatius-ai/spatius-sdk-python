@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Optional
 
-from avatarkit import (
+from spatius_sdk_python import (
     AudioFormat,
     OggOpusEncoderConfig,
     SessionTokenError,

@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
-from avatarkit import AvatarSession, SessionTokenError, new_avatar_session
+from spatius_sdk_python import AvatarSession, SessionTokenError, new_avatar_session
 
 # Configuration
 POOL_SIZE = 100  # Number of connections to maintain

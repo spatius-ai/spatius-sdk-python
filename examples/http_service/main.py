@@ -30,7 +30,7 @@ from typing import Any, Optional
 
 from aiohttp import web
 
-from avatarkit import AvatarSDKError, SessionTokenError, new_avatar_session
+from spatius_sdk_python import AvatarSDKError, SessionTokenError, new_avatar_session
 
 _AUDIO_RE = re.compile(r"^audio_(?P<rate>\d+)\.pcm$")
 
@@ -237,7 +237,7 @@ def create_app(*, repo_root: Path) -> web.Application:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="HTTP service example for avatarkit")
+    parser = argparse.ArgumentParser(description="HTTP service example for spatius-sdk-python")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
