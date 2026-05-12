@@ -1,0 +1,63 @@
+[project]
+name = "spatius"
+dynamic = ["version"]
+description = "Python SDK for avatar WebSocket services with audio streaming and animation frame reception"
+readme = "README.md"
+authors = [
+    { name = "3DRX", email = "3drxkjy@gmail.com" }
+]
+requires-python = ">=3.9"
+keywords = ["avatar", "websocket", "sdk", "audio", "animation", "protobuf"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+dependencies = [
+    "aiohttp>=3.9.0",
+    "nanoid>=2.0.0",
+    "protobuf>=5.28.3",
+    "websockets>=10.0",
+]
+
+[project.optional-dependencies]
+opus = [
+    "opuslib>=3.0.1",
+]
+
+[build-system]
+requires = ["hatchling>=1.28.0", "hatch-vcs>=0.5.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build]
+exclude = [
+    "/.uv-cache",
+    "/.venv",
+    "/.pytest_cache",
+    "/dist",
+    "/tests/fixtures/audio",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/spatius"]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+    "ruff>=0.14.14",
+    "tox>=4.0.0",
+]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:\"is not\" with 'int' literal\\. Did you mean \"!=\"\\?:SyntaxWarning:opuslib\\.api\\.decoder",
+]
