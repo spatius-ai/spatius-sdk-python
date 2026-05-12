@@ -3,7 +3,7 @@ Example: HTTP Service
 
 This example exposes a simple HTTP API that:
 - Accepts a POST request with a desired sample rate
-- Returns a PCM audio clip at that sample rate (loaded from audio_{rate}.pcm)
+- Returns a PCM audio clip at that sample rate (loaded from tests/fixtures/audio/audio_{rate}.pcm)
 - Uses the SDK to make a real request to the avatar service and returns:
   - The audio bytes (base64 in JSON)
   - The list of base64-encoded protobuf `message.Message` binaries received from the service
@@ -30,7 +30,7 @@ from typing import Any, Optional
 
 from aiohttp import web
 
-from spatius_sdk_python import AvatarSDKError, SessionTokenError, new_avatar_session
+from spatius import AvatarSDKError, SessionTokenError, new_avatar_session
 
 _AUDIO_RE = re.compile(r"^audio_(?P<rate>\d+)\.pcm$")
 
@@ -45,8 +45,9 @@ class AudioAsset:
 
 
 def _find_audio_assets(repo_root: Path) -> dict[int, AudioAsset]:
+    audio_dir = repo_root / "tests" / "fixtures" / "audio"
     assets: dict[int, AudioAsset] = {}
-    for p in repo_root.iterdir():
+    for p in audio_dir.iterdir():
         if not p.is_file():
             continue
         m = _AUDIO_RE.match(p.name)
@@ -131,6 +132,7 @@ async def handle_generate(request: web.Request) -> web.Response:
     session = new_avatar_session(
         api_key=sdk_cfg["api_key"],
         app_id=sdk_cfg["app_id"],
+        region=sdk_cfg["region"],
         console_endpoint_url=sdk_cfg["console_endpoint_url"],
         ingress_endpoint_url=sdk_cfg["ingress_endpoint_url"],
         avatar_id=sdk_cfg["avatar_id"],
@@ -197,10 +199,13 @@ async def handle_generate(request: web.Request) -> web.Response:
 def create_app(*, repo_root: Path) -> web.Application:
     assets = _find_audio_assets(repo_root)
     if not assets:
-        raise RuntimeError(f"No audio_{{rate}}.pcm files found in {repo_root}")
+        raise RuntimeError(
+            f"No audio_{{rate}}.pcm files found in {repo_root / 'tests' / 'fixtures' / 'audio'}"
+        )
 
     api_key = os.getenv("AVATAR_API_KEY", "").strip()
     app_id = os.getenv("AVATAR_APP_ID", "").strip()
+    region = os.getenv("SPATIUS_REGION", "us-west").strip() or "us-west"
     console_endpoint_url = os.getenv("AVATAR_CONSOLE_ENDPOINT", "").strip()
     ingress_endpoint_url = os.getenv("AVATAR_INGRESS_ENDPOINT", "").strip()
     avatar_id = os.getenv("AVATAR_SESSION_AVATAR_ID", "").strip()
@@ -209,8 +214,6 @@ def create_app(*, repo_root: Path) -> web.Application:
         for name, val in {
             "AVATAR_API_KEY": api_key,
             "AVATAR_APP_ID": app_id,
-            "AVATAR_CONSOLE_ENDPOINT": console_endpoint_url,
-            "AVATAR_INGRESS_ENDPOINT": ingress_endpoint_url,
             "AVATAR_SESSION_AVATAR_ID": avatar_id,
         }.items()
         if not val
@@ -223,6 +226,7 @@ def create_app(*, repo_root: Path) -> web.Application:
     app["sdk_config"] = {
         "api_key": api_key,
         "app_id": app_id,
+        "region": region,
         "console_endpoint_url": console_endpoint_url,
         "ingress_endpoint_url": ingress_endpoint_url,
         "avatar_id": avatar_id,
@@ -237,7 +241,7 @@ def create_app(*, repo_root: Path) -> web.Application:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="HTTP service example for spatius-sdk-python")
+    parser = argparse.ArgumentParser(description="HTTP service example for spatius")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()

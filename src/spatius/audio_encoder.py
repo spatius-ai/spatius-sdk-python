@@ -257,7 +257,7 @@ class OggOpusStreamEncoder:
         except ImportError as exc:  # pragma: no cover - exercised by runtime users
             raise RuntimeError(
                 "Internal Ogg Opus encoding requires the optional opus dependency. "
-                "Install spatius-sdk-python[opus] to enable it."
+                "Install spatius[opus] to enable it."
             ) from exc
 
         encoder = opuslib.Encoder(sample_rate, 1, application)

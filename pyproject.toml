@@ -1,6 +1,6 @@
 [project]
-name = "spatius-sdk-python"
-version = "0.1.7"
+name = "spatius"
+dynamic = ["version"]
 description = "Python SDK for avatar WebSocket services with audio streaming and animation frame reception"
 readme = "README.md"
 authors = [
@@ -32,8 +32,23 @@ opus = [
 ]
 
 [build-system]
-requires = ["uv_build>=0.10.2,<0.11.0"]
-build-backend = "uv_build"
+requires = ["hatchling>=1.28.0", "hatch-vcs>=0.5.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build]
+exclude = [
+    "/.uv-cache",
+    "/.venv",
+    "/.pytest_cache",
+    "/dist",
+    "/tests/fixtures/audio",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/spatius"]
 
 [dependency-groups]
 dev = [

@@ -30,13 +30,13 @@ cd proto && buf generate
 
 ## Architecture
 
-This is a Python SDK for WebSocket-based avatar services with audio streaming and animation frame reception. Published as `spatius-sdk-python` on PyPI.
+This is a Python SDK for WebSocket-based avatar services with audio streaming and animation frame reception. Published as `spatius` on PyPI.
 
 ### Core Components
 
 - **`avatar_session.py`** - Main `AvatarSession` class managing WebSocket connections, audio streaming, and frame reception. Uses v2 protocol with HTTP-based session token acquisition followed by WebSocket handshake. Exports `SessionTokenError` for token acquisition failures.
 
-- **`session_config.py`** - `SessionConfig` dataclass, `LiveKitEgressConfig` dataclass, `AgoraEgressConfig` dataclass, and `SessionConfigBuilder` (fluent builder pattern) for session configuration.
+- **`session_config.py`** - `SessionConfig` dataclass, `LiveKitEgressConfig` dataclass, `AgoraEgressConfig` dataclass, and typed `new_avatar_session()` factory for session configuration.
 
 - **`errors.py`** - `AvatarSDKError` exception with stable error codes (`AvatarSDKErrorCode` enum). Error codes: `sessionTokenExpired`, `sessionTokenInvalid`, `appIDUnrecognized`, `unknown`.
 
@@ -46,7 +46,7 @@ This is a Python SDK for WebSocket-based avatar services with audio streaming an
 
 ### Session Flow
 
-1. `new_avatar_session()` or `SessionConfigBuilder` creates configuration
+1. `new_avatar_session()` creates configuration
 2. `session.init()` - HTTP POST to console API for session token
 3. `session.start()` - WebSocket connection + v2 handshake, returns connection_id
 4. `session.send_audio()` - Send PCM audio via protobuf
@@ -74,7 +74,7 @@ To use LiveKit egress mode:
 4. The `transport_frames` callback will not be invoked since data goes to LiveKit
 
 ```python
-from spatius_sdk_python import new_avatar_session, LiveKitEgressConfig
+from spatius import new_avatar_session, LiveKitEgressConfig
 
 session = new_avatar_session(
     livekit_egress=LiveKitEgressConfig(
@@ -99,7 +99,7 @@ To use Agora egress mode:
 4. The `transport_frames` callback will not be invoked since data goes to Agora
 
 ```python
-from spatius_sdk_python import new_avatar_session, AgoraEgressConfig
+from spatius import new_avatar_session, AgoraEgressConfig
 
 session = new_avatar_session(
     agora_egress=AgoraEgressConfig(

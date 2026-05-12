@@ -21,14 +21,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
-from spatius_sdk_python import AvatarSession, SessionTokenError, new_avatar_session
+from spatius import AvatarSession, SessionTokenError, new_avatar_session
 
 # Configuration
 POOL_SIZE = 100  # Number of connections to maintain
 CONCURRENT_REQUESTS = 5  # Number of concurrent audio requests per round
 NUM_ROUNDS = 10  # Number of rounds to run
 ROUND_INTERVAL = 30.0  # Seconds between rounds (total ~5 minutes with 10 rounds)
-AUDIO_FILE_PATH = "../../audio.pcm"
+AUDIO_FILE_PATH = "../../tests/fixtures/audio/audio.pcm"
 REQUEST_TIMEOUT = 45  # seconds
 SESSION_TTL = 10  # minutes (longer for pool reuse over multiple rounds)
 
@@ -581,6 +581,7 @@ async def main() -> int:
             "api_key": config["api_key"],
             "app_id": config["app_id"],
             "use_query_auth": config["use_query_auth"],
+            "region": config["region"],
             "console_endpoint_url": config["console_url"],
             "ingress_endpoint_url": config["ingress_url"],
             "avatar_id": config["avatar_id"],
@@ -651,6 +652,7 @@ def load_config() -> dict:
         "y",
         "on",
     )
+    region = os.getenv("SPATIUS_REGION", "us-west").strip() or "us-west"
     console_url = os.getenv("AVATAR_CONSOLE_ENDPOINT", "").strip()
     ingress_url = os.getenv("AVATAR_INGRESS_ENDPOINT", "").strip()
     avatar_id = os.getenv("AVATAR_SESSION_AVATAR_ID", "").strip()
@@ -660,10 +662,6 @@ def load_config() -> dict:
         missing.append("AVATAR_API_KEY")
     if not app_id:
         missing.append("AVATAR_APP_ID")
-    if not console_url:
-        missing.append("AVATAR_CONSOLE_ENDPOINT")
-    if not ingress_url:
-        missing.append("AVATAR_INGRESS_ENDPOINT")
     if not avatar_id:
         missing.append("AVATAR_SESSION_AVATAR_ID")
 
@@ -676,6 +674,7 @@ def load_config() -> dict:
         "api_key": api_key,
         "app_id": app_id,
         "use_query_auth": use_query_auth,
+        "region": region,
         "console_url": console_url,
         "ingress_url": ingress_url,
         "avatar_id": avatar_id,

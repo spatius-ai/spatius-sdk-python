@@ -1,10 +1,18 @@
-"""Configuration options for avatar sessions."""
+"""Configuration options and factory for avatar sessions."""
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Callable, Optional, Union
+from typing import Callable, Optional, Union, TYPE_CHECKING
 import warnings
+
+if TYPE_CHECKING:
+    from .avatar_session import AvatarSession
+
+
+DEFAULT_REGION = "us-west"
 
 
 class AudioFormat(str, Enum):
@@ -112,6 +120,8 @@ class SessionConfig:
         transport_frames: Callback for receiving animation frames (frame_data, is_last).
         on_error: Callback for error handling.
         on_close: Callback invoked when session closes.
+        region: Spatius region used to compose endpoint URLs when explicit URLs are not
+            provided. Defaults to "us-west".
         console_endpoint_url: URL for the console API endpoint.
         ingress_endpoint_url: URL for the ingress websocket endpoint.
         livekit_egress: If set, enables LiveKit egress mode - audio and animation are
@@ -135,6 +145,7 @@ class SessionConfig:
     )
     on_error: Callable[[Exception], None] = field(default=lambda err: None)
     on_close: Callable[[], None] = field(default=lambda: None)
+    region: str = DEFAULT_REGION
     console_endpoint_url: str = ""
     ingress_endpoint_url: str = ""
     livekit_egress: Optional[LiveKitEgressConfig] = None
@@ -142,124 +153,77 @@ class SessionConfig:
 
     def __post_init__(self) -> None:
         self.audio_format = AudioFormat(self.audio_format)
+        self.region = self.region.strip()
+        if self.region and not self.console_endpoint_url:
+            self.console_endpoint_url = (
+                f"https://console.{self.region}.spatius.ai/v1/console"
+            )
+        if self.region and not self.ingress_endpoint_url:
+            self.ingress_endpoint_url = (
+                f"wss://api.{self.region}.spatius.ai/v2/driveningress"
+            )
 
 
-class SessionConfigBuilder:
-    """Builder for constructing SessionConfig with fluent interface."""
+def _noop_transport_frames(data: bytes, last: bool) -> None:
+    pass
 
-    def __init__(self):
-        """Initialize a new SessionConfigBuilder with default values."""
-        self._config = SessionConfig()
 
-    def with_avatar_id(self, avatar_id: str) -> "SessionConfigBuilder":
-        """Set the avatar identifier."""
-        self._config.avatar_id = avatar_id
-        return self
+def _noop_error(error: Exception) -> None:
+    pass
 
-    def with_api_key(self, api_key: str) -> "SessionConfigBuilder":
-        """Set the API key."""
-        self._config.api_key = api_key
-        return self
 
-    def with_app_id(self, app_id: str) -> "SessionConfigBuilder":
-        """Set the application identifier."""
-        self._config.app_id = app_id
-        return self
+def _noop_close() -> None:
+    pass
 
-    def with_use_query_auth(self, use_query_auth: bool) -> "SessionConfigBuilder":
-        """
-        Choose whether websocket auth is sent via URL query params (web) or headers (mobile).
-        """
-        self._config.use_query_auth = use_query_auth
-        return self
 
-    def with_expire_at(self, expire_at: datetime) -> "SessionConfigBuilder":
-        """Set the session expiration time."""
-        self._config.expire_at = expire_at
-        return self
+def new_avatar_session(
+    *,
+    avatar_id: str = "",
+    api_key: str = "",
+    app_id: str = "",
+    use_query_auth: bool = False,
+    expire_at: Optional[datetime] = None,
+    sample_rate: int = 16000,
+    bitrate: int = 0,
+    audio_format: Union[AudioFormat, str] = AudioFormat.PCM_S16LE,
+    ogg_opus_encoder: Optional[OggOpusEncoderConfig] = None,
+    on_encoded_audio: Optional[Callable[[str, bytes], None]] = None,
+    transport_frames: Callable[[bytes, bool], None] = _noop_transport_frames,
+    on_error: Callable[[Exception], None] = _noop_error,
+    on_close: Callable[[], None] = _noop_close,
+    region: str = DEFAULT_REGION,
+    console_endpoint_url: str = "",
+    ingress_endpoint_url: str = "",
+    livekit_egress: Optional[LiveKitEgressConfig] = None,
+    agora_egress: Optional[AgoraEgressConfig] = None,
+) -> "AvatarSession":
+    """
+    Create an AvatarSession from typed configuration parameters.
 
-    def with_sample_rate(self, sample_rate: int) -> "SessionConfigBuilder":
-        """Set the audio sample rate in Hz."""
-        self._config.sample_rate = sample_rate
-        return self
+    Explicit endpoint URLs take precedence. Otherwise, ``region`` composes:
+    ``https://console.<region>.spatius.ai/v1/console`` and
+    ``wss://api.<region>.spatius.ai/v2/driveningress``.
+    """
+    from .avatar_session import AvatarSession
 
-    def with_bitrate(self, bitrate: int) -> "SessionConfigBuilder":
-        """Set the audio bitrate (if applicable)."""
-        self._config.bitrate = bitrate
-        return self
-
-    def with_audio_format(
-        self, audio_format: Union[AudioFormat, str]
-    ) -> "SessionConfigBuilder":
-        """Set the session audio input format."""
-        self._config.audio_format = AudioFormat(audio_format)
-        return self
-
-    def with_ogg_opus_encoder(
-        self, config: Optional[OggOpusEncoderConfig] = None
-    ) -> "SessionConfigBuilder":
-        """Enable client-side PCM-to-Ogg-Opus encoding for OGG_OPUS sessions."""
-        self._config.ogg_opus_encoder = config or OggOpusEncoderConfig()
-        return self
-
-    def with_on_encoded_audio(
-        self, handler: Callable[[str, bytes], None]
-    ) -> "SessionConfigBuilder":
-        """Set the callback invoked when internal Ogg Opus encoding finishes."""
-        self._config.on_encoded_audio = handler
-        return self
-
-    def with_transport_frames(
-        self, handler: Callable[[bytes, bool], None]
-    ) -> "SessionConfigBuilder":
-        """Set the callback for receiving animation frames."""
-        self._config.transport_frames = handler
-        return self
-
-    def with_on_error(
-        self, handler: Callable[[Exception], None]
-    ) -> "SessionConfigBuilder":
-        """Set the error handler callback."""
-        self._config.on_error = handler
-        return self
-
-    def with_on_close(self, handler: Callable[[], None]) -> "SessionConfigBuilder":
-        """Set the close handler callback."""
-        self._config.on_close = handler
-        return self
-
-    def with_console_endpoint_url(self, url: str) -> "SessionConfigBuilder":
-        """Set the console endpoint URL."""
-        self._config.console_endpoint_url = url
-        return self
-
-    def with_ingress_endpoint_url(self, url: str) -> "SessionConfigBuilder":
-        """Set the ingress endpoint URL."""
-        self._config.ingress_endpoint_url = url
-        return self
-
-    def with_livekit_egress(
-        self, config: LiveKitEgressConfig
-    ) -> "SessionConfigBuilder":
-        """
-        Enable LiveKit egress mode for the session.
-
-        When set, audio and animation data are streamed to a LiveKit room via the egress
-        service instead of being returned through the WebSocket connection.
-        """
-        self._config.livekit_egress = config
-        return self
-
-    def with_agora_egress(self, config: AgoraEgressConfig) -> "SessionConfigBuilder":
-        """
-        Enable Agora egress mode for the session.
-
-        When set, audio and animation data are streamed to an Agora channel via the egress
-        service instead of being returned through the WebSocket connection.
-        """
-        self._config.agora_egress = config
-        return self
-
-    def build(self) -> SessionConfig:
-        """Build and return the configured SessionConfig."""
-        return self._config
+    config = SessionConfig(
+        avatar_id=avatar_id,
+        api_key=api_key,
+        app_id=app_id,
+        use_query_auth=use_query_auth,
+        expire_at=expire_at,
+        sample_rate=sample_rate,
+        bitrate=bitrate,
+        audio_format=audio_format,
+        ogg_opus_encoder=ogg_opus_encoder,
+        on_encoded_audio=on_encoded_audio,
+        transport_frames=transport_frames,
+        on_error=on_error,
+        on_close=on_close,
+        region=region,
+        console_endpoint_url=console_endpoint_url,
+        ingress_endpoint_url=ingress_endpoint_url,
+        livekit_egress=livekit_egress,
+        agora_egress=agora_egress,
+    )
+    return AvatarSession(config)

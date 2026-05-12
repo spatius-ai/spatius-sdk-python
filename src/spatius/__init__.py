@@ -1,23 +1,23 @@
-"""
-Avatar SDK Python - WebSocket SDK for Avatar Services
+"""Spatius Python SDK for avatar sessions."""
 
-This package provides a Python SDK for connecting to avatar services via WebSocket,
-supporting audio streaming and receiving animation frames.
-"""
+from importlib.metadata import PackageNotFoundError, version
 
-from .avatar_session import AvatarSession, new_avatar_session
+from .avatar_session import AvatarSession
 from .errors import AvatarSDKError, AvatarSDKErrorCode, SessionTokenError
 from .session_config import (
     AudioFormat,
     OggOpusEncoderConfig,
     SessionConfig,
-    SessionConfigBuilder,
     LiveKitEgressConfig,
     AgoraEgressConfig,
+    new_avatar_session,
 )
 from .logid import generate_log_id
 
-__version__ = "0.1.7"
+try:
+    __version__ = version("spatius")
+except PackageNotFoundError:  # pragma: no cover - only when imported without install
+    __version__ = "0+unknown"
 
 __all__ = [
     "AvatarSession",
@@ -28,7 +28,6 @@ __all__ = [
     "AudioFormat",
     "OggOpusEncoderConfig",
     "SessionConfig",
-    "SessionConfigBuilder",
     "LiveKitEgressConfig",
     "AgoraEgressConfig",
     "generate_log_id",

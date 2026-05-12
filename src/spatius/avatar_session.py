@@ -18,7 +18,6 @@ from .session_config import (
     AudioFormat,
     OggOpusEncoderConfig,
     SessionConfig,
-    SessionConfigBuilder,
 )
 
 SESSION_TOKEN_PATH = "/session-tokens"
@@ -1059,65 +1058,3 @@ class AvatarSession:
             self._config.on_error(error)
         except Exception:
             pass
-
-
-def new_avatar_session(**kwargs) -> AvatarSession:
-    """
-    Create a new AvatarSession with the provided configuration options.
-
-    Args:
-        **kwargs: Configuration parameters matching SessionConfig fields.
-
-    Returns:
-        A new AvatarSession instance.
-
-    Example:
-        ```python
-        session = new_avatar_session(
-            avatar_id="my-avatar",
-            api_key="my-api-key",
-            console_endpoint_url="https://console.example.com",
-            ingress_endpoint_url="https://ingress.example.com",
-            expire_at=datetime.now(timezone.utc) + timedelta(minutes=5)
-        )
-        ```
-    """
-    builder = SessionConfigBuilder()
-
-    if "avatar_id" in kwargs:
-        builder.with_avatar_id(kwargs["avatar_id"])
-    if "api_key" in kwargs:
-        builder.with_api_key(kwargs["api_key"])
-    if "app_id" in kwargs:
-        builder.with_app_id(kwargs["app_id"])
-    if "use_query_auth" in kwargs:
-        builder.with_use_query_auth(kwargs["use_query_auth"])
-    if "expire_at" in kwargs:
-        builder.with_expire_at(kwargs["expire_at"])
-    if "sample_rate" in kwargs:
-        builder.with_sample_rate(kwargs["sample_rate"])
-    if "bitrate" in kwargs:
-        builder.with_bitrate(kwargs["bitrate"])
-    if "audio_format" in kwargs:
-        builder.with_audio_format(kwargs["audio_format"])
-    if "ogg_opus_encoder" in kwargs and kwargs["ogg_opus_encoder"] is not None:
-        builder.with_ogg_opus_encoder(kwargs["ogg_opus_encoder"])
-    if "on_encoded_audio" in kwargs and kwargs["on_encoded_audio"] is not None:
-        builder.with_on_encoded_audio(kwargs["on_encoded_audio"])
-    if "transport_frames" in kwargs:
-        builder.with_transport_frames(kwargs["transport_frames"])
-    if "on_error" in kwargs:
-        builder.with_on_error(kwargs["on_error"])
-    if "on_close" in kwargs:
-        builder.with_on_close(kwargs["on_close"])
-    if "console_endpoint_url" in kwargs:
-        builder.with_console_endpoint_url(kwargs["console_endpoint_url"])
-    if "ingress_endpoint_url" in kwargs:
-        builder.with_ingress_endpoint_url(kwargs["ingress_endpoint_url"])
-    if "livekit_egress" in kwargs:
-        builder.with_livekit_egress(kwargs["livekit_egress"])
-    if "agora_egress" in kwargs:
-        builder.with_agora_egress(kwargs["agora_egress"])
-
-    config = builder.build()
-    return AvatarSession(config)

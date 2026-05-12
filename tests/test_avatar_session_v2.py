@@ -12,7 +12,7 @@ from websockets.exceptions import ConnectionClosedError, InvalidStatus
 from websockets.frames import Close
 from websockets.http11 import Response
 
-from avatarkit import (
+from spatius import (
     AudioFormat,
     AvatarSDKError,
     AvatarSDKErrorCode,
@@ -21,7 +21,7 @@ from avatarkit import (
     SessionTokenError,
     new_avatar_session,
 )
-from avatarkit.proto.generated import message_pb2
+from spatius.proto.generated import message_pb2
 
 _HAS_OPUSLIB = importlib.util.find_spec("opuslib") is not None
 
@@ -136,6 +136,34 @@ def _mk_server_error(code: int = 123, message: str = "bad") -> bytes:
 
 
 class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
+    def test_new_avatar_session_defaults_endpoints_from_region(self):
+        session = new_avatar_session(region="eu-central")
+
+        self.assertEqual(
+            session.config.console_endpoint_url,
+            "https://console.eu-central.spatius.ai/v1/console",
+        )
+        self.assertEqual(
+            session.config.ingress_endpoint_url,
+            "wss://api.eu-central.spatius.ai/v2/driveningress",
+        )
+
+    def test_new_avatar_session_explicit_endpoints_override_region(self):
+        session = new_avatar_session(
+            region="eu-central",
+            console_endpoint_url="https://console.example.com/v1/console",
+            ingress_endpoint_url="wss://api.example.com/v2/driveningress",
+        )
+
+        self.assertEqual(
+            session.config.console_endpoint_url,
+            "https://console.example.com/v1/console",
+        )
+        self.assertEqual(
+            session.config.ingress_endpoint_url,
+            "wss://api.example.com/v2/driveningress",
+        )
+
     async def test_init_raises_structured_session_token_error(self):
         session = new_avatar_session(
             console_endpoint_url="https://console.example.com",
@@ -150,7 +178,7 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "avatarkit.avatar_session.aiohttp.ClientSession",
+            "spatius.avatar_session.aiohttp.ClientSession",
             new=lambda: _FakeClientSession(_FakeHTTPResponse(400, body)),
         ):
             with self.assertRaises(SessionTokenError) as cm:
@@ -174,7 +202,7 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "avatarkit.avatar_session.aiohttp.ClientSession",
+            "spatius.avatar_session.aiohttp.ClientSession",
             new=lambda: _FakeClientSession(
                 error=aiohttp.ClientConnectionError("network down")
             ),
@@ -211,8 +239,8 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         session._session_token = "tok-1"  # bypass init()
 
         with (
-            patch("avatarkit.avatar_session.websockets.connect", new=fake_connect),
-            patch("avatarkit.avatar_session.asyncio.create_task", new=fake_create_task),
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
         ):
             cid = await session.start()
 
@@ -258,8 +286,8 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         session._session_token = "tok-1"
 
         with (
-            patch("avatarkit.avatar_session.websockets.connect", new=fake_connect),
-            patch("avatarkit.avatar_session.asyncio.create_task", new=fake_create_task),
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
         ):
             await session.start()
 
@@ -296,8 +324,8 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         session._session_token = "tok-1"
 
         with (
-            patch("avatarkit.avatar_session.websockets.connect", new=fake_connect),
-            patch("avatarkit.avatar_session.asyncio.create_task", new=fake_create_task),
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
         ):
             await session.start()
 
@@ -364,8 +392,8 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         session._session_token = "tok-1"
 
         with (
-            patch("avatarkit.avatar_session.websockets.connect", new=fake_connect),
-            patch("avatarkit.avatar_session.asyncio.create_task", new=fake_create_task),
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
         ):
             await session.start()
 
@@ -406,8 +434,8 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         session._session_token = "tok-1"
 
         with (
-            patch("avatarkit.avatar_session.websockets.connect", new=fake_connect),
-            patch("avatarkit.avatar_session.asyncio.create_task", new=fake_create_task),
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
         ):
             await session.start()
 
@@ -451,8 +479,8 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         session._session_token = "tok-1"
 
         with (
-            patch("avatarkit.avatar_session.websockets.connect", new=fake_connect),
-            patch("avatarkit.avatar_session.asyncio.create_task", new=fake_create_task),
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
         ):
             await session.start()
 
@@ -497,12 +525,12 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         session._session_token = "tok-1"
 
         with (
-            patch("avatarkit.avatar_session.websockets.connect", new=fake_connect),
-            patch("avatarkit.avatar_session.asyncio.create_task", new=fake_create_task),
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
         ):
             await session.start()
 
-        with self.assertLogs("avatarkit.avatar_session", level="ERROR") as logs:
+        with self.assertLogs("spatius.avatar_session", level="ERROR") as logs:
             await session.send_audio(b"\x00\x00" * 480, end=True)
 
         self.assertIn("on_encoded_audio callback raised an exception", logs.output[0])
@@ -531,8 +559,8 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         session._session_token = "tok-1"
 
         with (
-            patch("avatarkit.avatar_session.websockets.connect", new=fake_connect),
-            patch("avatarkit.avatar_session.asyncio.create_task", new=fake_create_task),
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
         ):
             await session.start()
 
@@ -597,8 +625,8 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         session._session_token = "tok-1"
 
         with (
-            patch("avatarkit.avatar_session.websockets.connect", new=fake_connect),
-            patch("avatarkit.avatar_session.asyncio.create_task", new=fake_create_task),
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
         ):
             with self.assertRaises(AvatarSDKError) as cm:
                 await session.start()
@@ -631,7 +659,7 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         )
         session._session_token = "tok-1"
 
-        with patch("avatarkit.avatar_session.websockets.connect", new=fake_connect):
+        with patch("spatius.avatar_session.websockets.connect", new=fake_connect):
             with self.assertRaises(AvatarSDKError) as cm:
                 await session.start()
 
@@ -665,7 +693,7 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         )
         session._session_token = "tok-1"
 
-        with patch("avatarkit.avatar_session.websockets.connect", new=fake_connect):
+        with patch("spatius.avatar_session.websockets.connect", new=fake_connect):
             with self.assertRaises(AvatarSDKError) as cm:
                 await session.start()
 
@@ -694,7 +722,7 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         )
         session._session_token = "tok-1"
 
-        with patch("avatarkit.avatar_session.websockets.connect", new=fake_connect):
+        with patch("spatius.avatar_session.websockets.connect", new=fake_connect):
             with self.assertRaises(AvatarSDKError) as cm:
                 await session.start()
 
@@ -799,8 +827,8 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         session._session_token = "tok-1"
 
         with (
-            patch("avatarkit.avatar_session.websockets.connect", new=fake_connect),
-            patch("avatarkit.avatar_session.asyncio.create_task", new=fake_create_task),
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
         ):
             with self.assertRaises(AvatarSDKError) as cm:
                 await session.start()

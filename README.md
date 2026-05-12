@@ -1,17 +1,17 @@
-# Avatar SDK Python
+# Spatius Python SDK
 
 A Python SDK for connecting to avatar services via WebSocket, supporting audio streaming and receiving animation frames.
 
 ## Installation
 
 ```bash
-pip install spatius-sdk-python
+pip install spatius
 ```
 
 To enable the built-in PCM-to-Ogg-Opus encoder, install the optional `opus` extra:
 
 ```bash
-pip install "spatius-sdk-python[opus]"
+pip install "spatius[opus]"
 ```
 
 The optional encoder uses `opuslib`, which requires a working `libopus` runtime on the
@@ -23,15 +23,14 @@ host system.
 import asyncio
 from datetime import datetime, timedelta, timezone
 
-from spatius_sdk_python import AudioFormat, new_avatar_session
+from spatius import AudioFormat, new_avatar_session
 
 async def main():
     # Create session
     session = new_avatar_session(
         api_key="your-api-key",
         app_id="your-app-id",
-        console_endpoint_url="https://console.us-west.spatialwalk.cloud/v1/console",
-        ingress_endpoint_url="wss://api.us-west.spatialwalk.cloud/v2/driveningress",
+        region="us-west",
         avatar_id="your-avatar-id",
         expire_at=datetime.now(timezone.utc) + timedelta(minutes=5),
         transport_frames=lambda frame, last: print(f"Received frame: {len(frame)} bytes"),
@@ -63,12 +62,11 @@ if __name__ == "__main__":
 
 ### Session Configuration
 
-The SDK provides two ways to configure a session:
-
-#### Option 1: Using `new_avatar_session()` (Recommended)
+Create sessions with `new_avatar_session()`. By default, the SDK targets the `us-west`
+region and composes endpoints automatically:
 
 ```python
-from spatius_sdk_python import AudioFormat, new_avatar_session
+from spatius import AudioFormat, new_avatar_session
 
 session = new_avatar_session(
     avatar_id="avatar-123",
@@ -78,8 +76,7 @@ session = new_avatar_session(
     # in the websocket URL query params instead of headers.
     use_query_auth=False,
     expire_at=datetime.now(timezone.utc) + timedelta(minutes=5),
-    console_endpoint_url="https://console.us-west.spatialwalk.cloud/v1/console",
-    ingress_endpoint_url="wss://api.us-west.spatialwalk.cloud/v2/driveningress",
+    region="us-west",
     sample_rate=16000,  # Default: 16000 Hz
     audio_format=AudioFormat.PCM_S16LE,
     transport_frames=on_frame_received,
@@ -88,22 +85,25 @@ session = new_avatar_session(
 )
 ```
 
-#### Option 2: Using Configuration Builder
+If you need custom endpoints, pass them explicitly. Explicit URLs override `region`.
 
 ```python
-from spatius_sdk_python import SessionConfigBuilder, AvatarSession
+session = new_avatar_session(
+    avatar_id="avatar-123",
+    api_key="your-api-key",
+    app_id="your-app-id",
+    expire_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+    console_endpoint_url="https://console.example.com/v1/console",
+    ingress_endpoint_url="wss://api.example.com/v2/driveningress",
+    transport_frames=on_frame_received,
+)
+```
 
-config = (SessionConfigBuilder()
-    .with_avatar_id("avatar-123")
-    .with_api_key("your-api-key")
-    .with_app_id("your-app-id")
-    .with_console_endpoint_url("https://console.us-west.spatialwalk.cloud/v1/console")
-    .with_ingress_endpoint_url("wss://api.us-west.spatialwalk.cloud/v2/driveningress")
-    .with_expire_at(datetime.now(timezone.utc) + timedelta(minutes=5))
-    .with_transport_frames(on_frame_received)
-    .build())
+Region endpoints use this pattern:
 
-session = AvatarSession(config)
+```text
+https://console.<region>.spatius.ai/v1/console
+wss://api.<region>.spatius.ai/v2/driveningress
 ```
 
 ### Session Lifecycle
@@ -140,7 +140,7 @@ The SDK supports two session-level input formats:
 - Format: Raw PCM bytes
 
 ```python
-from spatius_sdk_python import AudioFormat
+from spatius import AudioFormat
 
 session = new_avatar_session(
     ...,
@@ -148,7 +148,7 @@ session = new_avatar_session(
     audio_format=AudioFormat.PCM_S16LE,
 )
 
-with open("audio.pcm", "rb") as f:
+with open("tests/fixtures/audio/audio.pcm", "rb") as f:
     audio_data = f.read()
 
 await session.send_audio(audio_data, end=True)
@@ -162,7 +162,7 @@ await session.send_audio(audio_data, end=True)
 - Request contract: each request ID must carry one continuous Ogg Opus stream across one or more `send_audio()` calls, and the final chunk must use `end=True`
 
 ```python
-from spatius_sdk_python import AudioFormat
+from spatius import AudioFormat
 
 session = new_avatar_session(
     ...,
@@ -184,7 +184,7 @@ If you want the session to negotiate `AudioFormat.OGG_OPUS` but still provide ra
 bytes to `send_audio()`, enable the optional internal encoder.
 
 ```python
-from spatius_sdk_python import AudioFormat, OggOpusEncoderConfig
+from spatius import AudioFormat, OggOpusEncoderConfig
 
 encoded_outputs = []
 
@@ -197,7 +197,7 @@ session = new_avatar_session(
     on_encoded_audio=lambda req_id, payload: encoded_outputs.append((req_id, payload)),
 )
 
-with open("audio_24000.pcm", "rb") as f:
+with open("tests/fixtures/audio/audio_24000.pcm", "rb") as f:
     pcm_audio = f.read()
 
 await session.send_audio(pcm_audio, end=True)
@@ -205,7 +205,7 @@ await session.send_audio(pcm_audio, end=True)
 
 Notes:
 
-- The internal encoder is optional; if you do not install `spatius-sdk-python[opus]`, keep using PCM or provide pre-encoded Ogg Opus bytes yourself.
+- The internal encoder is optional; if you do not install `spatius[opus]`, keep using PCM or provide pre-encoded Ogg Opus bytes yourself.
 - `on_encoded_audio` fires when internal encoding completes for a request and receives `(req_id, encoded_audio_bytes)`.
 - Advanced usage still works: if `audio_format=AudioFormat.OGG_OPUS` and `ogg_opus_encoder` is unset, `send_audio()` forwards your pre-encoded Ogg Opus bytes unchanged.
 
@@ -214,14 +214,13 @@ Notes:
 When configured with `livekit_egress`, audio and animation data are streamed to a LiveKit room via the egress service instead of being returned through the WebSocket connection.
 
 ```python
-from spatius_sdk_python import new_avatar_session, LiveKitEgressConfig
+from spatius import new_avatar_session, LiveKitEgressConfig
 
 session = new_avatar_session(
     avatar_id="avatar-123",
     api_key="your-api-key",
     app_id="your-app-id",
-    console_endpoint_url="https://console.us-west.spatialwalk.cloud/v1/console",
-    ingress_endpoint_url="wss://api.us-west.spatialwalk.cloud/v2/driveningress",
+    region="us-west",
     expire_at=datetime.now(timezone.utc) + timedelta(minutes=5),
     livekit_egress=LiveKitEgressConfig(
         url="wss://livekit.example.com",
@@ -274,7 +273,7 @@ def on_frame_received(frame_data: bytes, is_last: bool):
 Handles errors from the session:
 
 ```python
-from spatius_sdk_python import AvatarSDKError
+from spatius import AvatarSDKError
 
 
 def on_error(error: Exception):
@@ -298,7 +297,7 @@ Use `SessionTokenError` for token creation failures and `AvatarSDKError` for all
 other structured SDK errors:
 
 ```python
-from spatius_sdk_python import AvatarSDKError, SessionTokenError
+from spatius import AvatarSDKError, SessionTokenError
 
 try:
     await session.init()
@@ -383,8 +382,9 @@ Configuration dataclass for avatar sessions.
 - `transport_frames: Callable[[bytes, bool], None]` - Frame callback
 - `on_error: Callable[[Exception], None]` - Error callback
 - `on_close: Callable[[], None]` - Close callback
-- `console_endpoint_url: str` - Console API URL
-- `ingress_endpoint_url: str` - Ingress WebSocket URL
+- `region: str` - Region used to compose endpoints (default: `us-west`)
+- `console_endpoint_url: str` - Optional explicit console API URL
+- `ingress_endpoint_url: str` - Optional explicit ingress WebSocket URL
 - `livekit_egress: Optional[LiveKitEgressConfig]` - LiveKit egress configuration
 
 ### LiveKitEgressConfig
@@ -401,29 +401,6 @@ Configuration for streaming to a LiveKit room.
 - `publisher_id: str` - Publisher identity in the room
 - `extra_attributes: dict[str, str]` - Extra LiveKit participant attributes
 - `idle_timeout: int` - Idle timeout in seconds (0 uses server defaults)
-
-### SessionConfigBuilder
-
-Builder for constructing SessionConfig with fluent interface.
-
-#### Methods
-
-All methods return `self` for chaining:
-
-- `with_avatar_id(avatar_id: str)`
-- `with_api_key(api_key: str)`
-- `with_app_id(app_id: str)`
-- `with_use_query_auth(use_query_auth: bool)`
-- `with_expire_at(expire_at: datetime)`
-- `with_sample_rate(sample_rate: int)`
-- `with_bitrate(bitrate: int)`
-- `with_transport_frames(handler: Callable)`
-- `with_on_error(handler: Callable)`
-- `with_on_close(handler: Callable)`
-- `with_console_endpoint_url(url: str)`
-- `with_ingress_endpoint_url(url: str)`
-- `with_livekit_egress(config: LiveKitEgressConfig)`
-- `build() -> SessionConfig` - Build the configuration
 
 ### Utility Functions
 
@@ -454,7 +431,7 @@ cd proto
 buf generate
 ```
 
-The generated Python code is placed in `src/avatarkit/proto/generated/`.
+The generated Python code is placed in `src/spatius/proto/generated/`.
 
 ### Message Types
 
@@ -490,10 +467,10 @@ uv run pytest
 
 The repository includes opt-in network tests in `tests/test_e2e_errors.py` and
 `tests/test_e2e_request.py`. They are skipped by default and only run when
-`AVATARKIT_RUN_E2E=1` is set.
+`SPATIUS_RUN_E2E=1` is set.
 
 ```bash
-AVATARKIT_RUN_E2E=1 uv run pytest tests/test_e2e_errors.py tests/test_e2e_request.py
+SPATIUS_RUN_E2E=1 uv run pytest tests/test_e2e_errors.py tests/test_e2e_request.py
 ```
 
 Available e2e cases:
@@ -504,35 +481,35 @@ Available e2e cases:
 
 Environment variables:
 
-- `AVATARKIT_RUN_E2E=1` - Enables e2e tests
-- `AVATARKIT_E2E_API_KEY` - Required for the real `avatarNotFound` test
-- `AVATARKIT_E2E_APP_ID` - Required for the real `avatarNotFound` test
-- `AVATARKIT_E2E_CONSOLE_ENDPOINT` - Required for the real `avatarNotFound` test
-- `AVATARKIT_E2E_INGRESS_ENDPOINT` - Required for the real `avatarNotFound` test unless you use the default public ingress endpoint for the invalid-token test only
-- `AVATARKIT_E2E_MISSING_AVATAR_ID` - Optional avatar id that should not exist; defaults to `avatarkit-e2e-missing-avatar-404`
-- `AVATARKIT_E2E_AVATAR_ID` - Required for the real request test
-- `AVATARKIT_E2E_AUDIO_FORMAT` - Optional, `pcm_s16le` or `ogg_opus`; defaults to `pcm_s16le`
-- `AVATARKIT_E2E_USE_INTERNAL_OGG_OPUS_ENCODER` - Optional, set to `1` to test the SDK's built-in PCM-to-Ogg-Opus encoder
-- `AVATARKIT_E2E_AUDIO_PATH` - Optional audio file path; defaults to `audio_16000.pcm` for PCM and for Ogg Opus when the internal encoder is enabled, otherwise `audio.ogg`
-- `AVATARKIT_E2E_SAMPLE_RATE` - Optional sample rate; defaults to `16000` for PCM and for Ogg Opus when the internal encoder is enabled, otherwise `24000`
-- `AVATARKIT_E2E_BITRATE` - Optional bitrate; defaults to `32000`
-- `AVATARKIT_E2E_CHUNK_SIZE` - Optional chunk size for streaming Ogg Opus; defaults to `4096`
-- `AVATARKIT_E2E_TIMEOUT_SECONDS` - Optional request timeout; defaults to `45`
-- `AVATARKIT_E2E_LIVEKIT_URL` - Required for the real invalid livekit tokrn test
+- `SPATIUS_RUN_E2E=1` - Enables e2e tests
+- `SPATIUS_E2E_API_KEY` - Required for the real `avatarNotFound` test
+- `SPATIUS_E2E_APP_ID` - Required for the real `avatarNotFound` test
+- `SPATIUS_E2E_REGION` - Optional region; defaults to `us-west`
+- `SPATIUS_E2E_CONSOLE_ENDPOINT` - Optional explicit console endpoint override
+- `SPATIUS_E2E_INGRESS_ENDPOINT` - Optional explicit ingress endpoint override
+- `SPATIUS_E2E_MISSING_AVATAR_ID` - Optional avatar id that should not exist; defaults to `spatius-e2e-missing-avatar-404`
+- `SPATIUS_E2E_AVATAR_ID` - Required for the real request test
+- `SPATIUS_E2E_AUDIO_FORMAT` - Optional, `pcm_s16le` or `ogg_opus`; defaults to `pcm_s16le`
+- `SPATIUS_E2E_USE_INTERNAL_OGG_OPUS_ENCODER` - Optional, set to `1` to test the SDK's built-in PCM-to-Ogg-Opus encoder
+- `SPATIUS_E2E_AUDIO_PATH` - Optional audio file path; defaults to `tests/fixtures/audio/audio_16000.pcm` for PCM and for Ogg Opus when the internal encoder is enabled, otherwise `audio.ogg`
+- `SPATIUS_E2E_SAMPLE_RATE` - Optional sample rate; defaults to `16000` for PCM and for Ogg Opus when the internal encoder is enabled, otherwise `24000`
+- `SPATIUS_E2E_BITRATE` - Optional bitrate; defaults to `32000`
+- `SPATIUS_E2E_CHUNK_SIZE` - Optional chunk size for streaming Ogg Opus; defaults to `4096`
+- `SPATIUS_E2E_TIMEOUT_SECONDS` - Optional request timeout; defaults to `45`
+- `SPATIUS_E2E_LIVEKIT_URL` - Required for the real invalid livekit tokrn test
 
 Example:
 
 ```bash
-export AVATARKIT_RUN_E2E=1
-export AVATARKIT_E2E_API_KEY="your-api-key"
-export AVATARKIT_E2E_APP_ID="your-app-id"
-export AVATARKIT_E2E_CONSOLE_ENDPOINT="https://console.us-west.spatialwalk.cloud/v1/console"
-export AVATARKIT_E2E_INGRESS_ENDPOINT="wss://api.us-west.spatialwalk.cloud/v2/driveningress"
-export AVATARKIT_E2E_MISSING_AVATAR_ID="avatarkit-e2e-missing-avatar-404"
-export AVATARKIT_E2E_AVATAR_ID="your-real-avatar-id"
-export AVATARKIT_E2E_AUDIO_FORMAT="pcm_s16le"
-export AVATARKIT_E2E_AUDIO_PATH="audio_16000.pcm"
-export AVATARKIT_E2E_LIVEKIT_URL="wss://livekit.example.com"
+export SPATIUS_RUN_E2E=1
+export SPATIUS_E2E_API_KEY="your-api-key"
+export SPATIUS_E2E_APP_ID="your-app-id"
+export SPATIUS_E2E_REGION="us-west"
+export SPATIUS_E2E_MISSING_AVATAR_ID="spatius-e2e-missing-avatar-404"
+export SPATIUS_E2E_AVATAR_ID="your-real-avatar-id"
+export SPATIUS_E2E_AUDIO_FORMAT="pcm_s16le"
+export SPATIUS_E2E_AUDIO_PATH="tests/fixtures/audio/audio_16000.pcm"
+export SPATIUS_E2E_LIVEKIT_URL="wss://livekit.example.com"
 
 uv run pytest tests/test_e2e_errors.py tests/test_e2e_request.py
 ```
@@ -540,16 +517,15 @@ uv run pytest tests/test_e2e_errors.py tests/test_e2e_request.py
 To test the SDK's built-in Ogg Opus encoder with a raw PCM fixture:
 
 ```bash
-export AVATARKIT_RUN_E2E=1
-export AVATARKIT_E2E_API_KEY="your-api-key"
-export AVATARKIT_E2E_APP_ID="your-app-id"
-export AVATARKIT_E2E_CONSOLE_ENDPOINT="https://console.us-west.spatialwalk.cloud/v1/console"
-export AVATARKIT_E2E_INGRESS_ENDPOINT="wss://api.us-west.spatialwalk.cloud/v2/driveningress"
-export AVATARKIT_E2E_AVATAR_ID="your-real-avatar-id"
-export AVATARKIT_E2E_AUDIO_FORMAT="ogg_opus"
-export AVATARKIT_E2E_USE_INTERNAL_OGG_OPUS_ENCODER="1"
-export AVATARKIT_E2E_AUDIO_PATH="audio_16000.pcm"
-export AVATARKIT_E2E_SAMPLE_RATE="16000"
+export SPATIUS_RUN_E2E=1
+export SPATIUS_E2E_API_KEY="your-api-key"
+export SPATIUS_E2E_APP_ID="your-app-id"
+export SPATIUS_E2E_REGION="us-west"
+export SPATIUS_E2E_AVATAR_ID="your-real-avatar-id"
+export SPATIUS_E2E_AUDIO_FORMAT="ogg_opus"
+export SPATIUS_E2E_USE_INTERNAL_OGG_OPUS_ENCODER="1"
+export SPATIUS_E2E_AUDIO_PATH="tests/fixtures/audio/audio_16000.pcm"
+export SPATIUS_E2E_SAMPLE_RATE="16000"
 
 uv run pytest tests/test_e2e_request.py -k send_audio_receives_animation_frames -s
 ```
@@ -560,7 +536,7 @@ real `avatarNotFound` test is skipped automatically.
 To run only the real request smoke test:
 
 ```bash
-AVATARKIT_RUN_E2E=1 uv run pytest tests/test_e2e_request.py -k send_audio_receives_animation_frames -s
+SPATIUS_RUN_E2E=1 uv run pytest tests/test_e2e_request.py -k send_audio_receives_animation_frames -s
 ```
 
 ## License
