@@ -35,7 +35,25 @@ class AvatarSDKErrorCode(str, Enum):
 
 
 class AvatarSDKError(Exception):
-    """SDK exception with a stable error code and structured context."""
+    """
+    SDK exception with a stable error code and structured context.
+
+    Attributes:
+        code: Stable SDK error code suitable for branching and logging.
+        message: Human-readable error message.
+        phase: Operation phase where the failure happened, such as ``session_token``,
+            ``websocket_connect``, ``websocket_handshake``, ``websocket_runtime``, or
+            ``websocket_send``.
+        http_status: HTTP status for token or WebSocket upgrade failures.
+        server_code: Server-provided error code when available.
+        server_title: Server-provided title when available.
+        server_detail: Server-provided detail when available.
+        connection_id: Server connection ID related to the error when available.
+        req_id: Audio request ID related to the error when available.
+        raw_body: Raw HTTP body for token or WebSocket upgrade failures.
+        close_code: WebSocket close code for unexpected disconnects.
+        close_reason: WebSocket close reason for unexpected disconnects.
+    """
 
     def __init__(
         self,
@@ -72,7 +90,13 @@ class AvatarSDKError(Exception):
 
 
 class SessionTokenError(AvatarSDKError):
-    """Raised when session token request or parsing fails."""
+    """
+    Raised when session-token creation fails.
+
+    This is a specialized ``AvatarSDKError`` with default phase ``session_token``.
+    Catch it separately when initialization failures need different handling from
+    WebSocket or runtime failures.
+    """
 
     def __init__(
         self,

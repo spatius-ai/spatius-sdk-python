@@ -28,13 +28,19 @@ logger = logging.getLogger(__name__)
 
 class AvatarSession:
     """
-    Manages an active avatar session with websocket communication.
+    Manages one avatar session over a WebSocket connection.
 
-    The session handles:
-    - Session token acquisition from console API
-    - WebSocket connection to ingress endpoint
-    - Audio streaming to the server
-    - Receiving animation frames from the server
+    Typical usage is:
+
+    1. Create a session with ``new_avatar_session()``.
+    2. Call ``init()`` to exchange the API key for a short-lived session token.
+    3. Call ``start()`` to open the ingress WebSocket and perform the protocol
+       handshake.
+    4. Call ``send_audio()`` one or more times.
+    5. Receive animation frames through the configured ``transport_frames`` callback.
+    6. Call ``close()`` when finished.
+
+    ``AvatarSession`` instances are stateful and should not be reused after close.
     """
 
     def __init__(self, config: SessionConfig):
@@ -57,16 +63,20 @@ class AvatarSession:
 
     @property
     def config(self) -> SessionConfig:
-        """Get a copy of the session configuration."""
+        """Return the session configuration used by this instance."""
         return self._config
 
     async def init(self) -> None:
         """
         Exchange configuration credentials for a session token from the console API.
 
+        This method must complete successfully before ``start()`` can open the
+        WebSocket connection.
+
         Raises:
-            ValueError: If configuration is missing required fields.
-            SessionTokenError: If token request fails.
+            ValueError: If required token fields are missing.
+            SessionTokenError: If token creation, response parsing, or server-side
+                token validation fails.
         """
         if not self._config.api_key:
             raise ValueError("Missing API key")
@@ -140,10 +150,14 @@ class AvatarSession:
 
     async def start(self) -> str:
         """
-        Establish WebSocket connection to the ingress endpoint.
+        Open the ingress WebSocket and complete the session handshake.
+
+        ``start()`` sends the session configuration to the service, waits for a
+        ``ServerConfirmSession`` message, and starts the background read loop that
+        dispatches callbacks.
 
         Returns:
-            Connection ID for tracking this session.
+            Server connection ID for tracking this session.
 
         Raises:
             ValueError: If configuration is invalid or session not initialized.
@@ -398,15 +412,20 @@ class AvatarSession:
 
     async def send_audio(self, audio: bytes, end: bool = False) -> str:
         """
-        Send audio data to the server.
+        Send one audio chunk to the avatar service.
 
         Audio bytes must match the session-level ``audio_format`` negotiated during
         ``start()``. For ``AudioFormat.OGG_OPUS``, callers can either send pre-encoded
         Ogg Opus bytes directly, or enable ``ogg_opus_encoder`` on the session config so
         ``send_audio()`` accepts raw PCM input and the SDK encodes it internally.
 
+        Consecutive calls with ``end=False`` share the same request ID. Passing
+        ``end=True`` closes the current request and causes the next ``send_audio()`` call
+        to allocate a new request ID.
+
         Args:
-            audio: Raw audio bytes to send.
+            audio: Audio bytes to send. May be empty for the final chunk of a pre-encoded
+                Ogg Opus stream.
             end: Whether this is the last audio chunk for the current request.
 
         Returns:
@@ -508,7 +527,11 @@ class AvatarSession:
 
     async def interrupt(self) -> str:
         """
-        Send an interrupt signal to stop the current audio processing.
+        Send an interrupt signal for the most recent audio request.
+
+        Interrupt is intended for egress sessions where generation may continue after the
+        client has sent the final audio chunk. The SDK tracks the last request ID even
+        after ``send_audio(..., end=True)`` so it can interrupt that in-flight request.
 
         Returns:
             The request ID that was interrupted.
@@ -549,7 +572,10 @@ class AvatarSession:
 
     async def close(self) -> None:
         """
-        Close the WebSocket connection and clean up resources.
+        Close the WebSocket connection, cancel the read loop, and run ``on_close``.
+
+        This method is idempotent. Callback exceptions are swallowed so cleanup does not
+        fail because of application callback code.
         """
         if self._connection is not None:
             try:

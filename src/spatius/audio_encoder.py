@@ -14,11 +14,28 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class EncodedAudioChunk:
+    """
+    Result of one internal Ogg Opus encoder step.
+
+    Attributes:
+        payload: Encoded bytes ready to send to the service.
+        completed_stream: Full encoded stream when collection is enabled and the request
+            has ended. Otherwise ``None``.
+    """
+
     payload: bytes
     completed_stream: Optional[bytes] = None
 
 
 class OggOpusStreamEncoder:
+    """
+    Streaming mono PCM to Ogg Opus encoder used by ``AvatarSession``.
+
+    This class is an internal implementation detail behind
+    ``OggOpusEncoderConfig``. It accepts 16-bit little-endian mono PCM and emits Ogg
+    pages that can be sent incrementally to the avatar service.
+    """
+
     _ALLOWED_SAMPLE_RATES = {8000, 12000, 16000, 24000, 48000}
     _ALLOWED_FRAME_DURATIONS_MS = {10, 20, 40, 60}
     _APPLICATIONS = {"audio", "voip", "restricted_lowdelay"}

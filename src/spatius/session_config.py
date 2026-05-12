@@ -16,7 +16,13 @@ DEFAULT_REGION = "us-west"
 
 
 class AudioFormat(str, Enum):
-    """Audio input encoding negotiated for a session."""
+    """
+    Audio input format negotiated with the avatar service.
+
+    Values:
+        PCM_S16LE: Raw mono 16-bit little-endian PCM bytes.
+        OGG_OPUS: One continuous mono Ogg Opus stream per request ID.
+    """
 
     PCM_S16LE = "pcm_s16le"
     OGG_OPUS = "ogg_opus"
@@ -24,7 +30,19 @@ class AudioFormat(str, Enum):
 
 @dataclass
 class OggOpusEncoderConfig:
-    """Optional client-side Ogg Opus encoder settings."""
+    """
+    Settings for the optional client-side PCM to Ogg Opus encoder.
+
+    Pass this to ``new_avatar_session(ogg_opus_encoder=...)`` together with
+    ``audio_format=AudioFormat.OGG_OPUS`` when callers provide raw PCM input but the
+    session should send Ogg Opus to the service.
+
+    Attributes:
+        frame_duration_ms: Opus frame duration in milliseconds. Supported values are
+            10, 20, 40, and 60.
+        application: Opus encoder application mode. Supported values are ``audio``,
+            ``voip``, and ``restricted_lowdelay``.
+    """
 
     frame_duration_ms: int = 20
     application: str = "audio"
@@ -40,8 +58,8 @@ class LiveKitEgressConfig:
 
     Attributes:
         url: LiveKit server URL (e.g., wss://livekit.example.com).
-        api_key: Deprecated. LiveKit API key. Optional when api_token is provided.
-        api_secret: Deprecated. LiveKit API secret. Optional when api_token is provided.
+        api_key: Deprecated LiveKit API key. Optional when api_token is provided.
+        api_secret: Deprecated LiveKit API secret. Optional when api_token is provided.
         api_token: Pre-generated LiveKit access token. Preferred over api_key and
             api_secret when provided.
         room_name: LiveKit room name to join.
@@ -97,7 +115,11 @@ class AgoraEgressConfig:
 @dataclass
 class SessionConfig:
     """
-    Configuration for an AvatarSession.
+    Complete configuration for an ``AvatarSession``.
+
+    Most users should create this indirectly with ``new_avatar_session()``. Direct
+    construction is still useful for advanced tests or dependency injection. If explicit
+    endpoint URLs are omitted, ``region`` composes Spatius production endpoints.
 
     Attributes:
         avatar_id: The avatar identifier for the session.
@@ -185,7 +207,7 @@ def new_avatar_session(
     expire_at: Optional[datetime] = None,
     sample_rate: int = 16000,
     bitrate: int = 0,
-    audio_format: Union[AudioFormat, str] = AudioFormat.PCM_S16LE,
+    audio_format: AudioFormat = AudioFormat.PCM_S16LE,
     ogg_opus_encoder: Optional[OggOpusEncoderConfig] = None,
     on_encoded_audio: Optional[Callable[[str, bytes], None]] = None,
     transport_frames: Callable[[bytes, bool], None] = _noop_transport_frames,
@@ -198,11 +220,34 @@ def new_avatar_session(
     agora_egress: Optional[AgoraEgressConfig] = None,
 ) -> "AvatarSession":
     """
-    Create an AvatarSession from typed configuration parameters.
+    Args:
+        avatar_id: Avatar identifier to connect to.
+        api_key: Console API key used to request a session token.
+        app_id: Application identifier used during WebSocket authentication.
+        use_query_auth: When true, send ``appId`` and ``sessionKey`` in the WebSocket
+            URL query string. When false, send credentials as headers.
+        expire_at: UTC-aware expiration time for the session token.
+        sample_rate: Input audio sample rate in Hz.
+        bitrate: Target bitrate for Ogg Opus sessions. PCM sessions normally use 0.
+        audio_format: Session input format.
+        ogg_opus_encoder: Optional internal encoder config for converting PCM input to
+            Ogg Opus before upload.
+        on_encoded_audio: Callback invoked with ``(req_id, encoded_audio_bytes)`` when
+            internal encoding finishes for a request.
+        transport_frames: Callback invoked with ``(frame_bytes, is_last)`` for each
+            animation frame payload returned over the WebSocket.
+        on_error: Callback invoked for structured SDK/runtime errors.
+        on_close: Callback invoked after the session closes.
+        region: Region used to compose default endpoint URLs.
+        console_endpoint_url: Optional explicit Console API URL. Overrides ``region``.
+        ingress_endpoint_url: Optional explicit ingress WebSocket URL. Overrides
+            ``region``.
+        livekit_egress: Optional configuration to enable streaming to LiveKit.
+        agora_egress: Optional configuration to enable streaming to Agora .
 
-    Explicit endpoint URLs take precedence. Otherwise, ``region`` composes:
-    ``https://console.<region>.spatius.ai/v1/console`` and
-    ``wss://api.<region>.spatius.ai/v2/driveningress``.
+    Returns:
+        A configured, uninitialized ``AvatarSession``. Call ``init()`` then ``start()``
+        before sending audio.
     """
     from .avatar_session import AvatarSession
 
