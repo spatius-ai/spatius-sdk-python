@@ -3,7 +3,7 @@ import types
 import unittest
 from unittest.mock import patch
 
-from avatarkit.audio_encoder import OggOpusStreamEncoder
+from spatius.audio_encoder import OggOpusStreamEncoder
 
 
 class _FakeOpusError(Exception):
@@ -33,7 +33,7 @@ class TestAudioEncoder(unittest.TestCase):
 
         with (
             patch.dict(sys.modules, {"opuslib": fake_opuslib}),
-            self.assertLogs("avatarkit.audio_encoder", level="WARNING") as logs,
+            self.assertLogs("spatius.audio_encoder", level="WARNING") as logs,
         ):
             encoder = OggOpusStreamEncoder._create_encoder(24000, 32000, "audio")
 

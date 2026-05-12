@@ -3,16 +3,13 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from typing import cast
 
-from avatarkit import (
+from spatius import (
     AvatarSDKError,
     AvatarSDKErrorCode,
     LiveKitEgressConfig,
     SessionTokenError,
     new_avatar_session,
 )
-
-
-_DEFAULT_E2E_INGRESS_ENDPOINT = "wss://api.us-west.spatialwalk.cloud/v2/driveningress"
 
 
 def _require_env(*names: str) -> dict[str, str]:
@@ -29,17 +26,22 @@ def _require_env(*names: str) -> dict[str, str]:
     return values
 
 
+def _endpoint_kwargs() -> dict[str, str]:
+    return {
+        "region": os.getenv("SPATIUS_E2E_REGION", "us-west").strip() or "us-west",
+        "console_endpoint_url": os.getenv("SPATIUS_E2E_CONSOLE_ENDPOINT", "").strip(),
+        "ingress_endpoint_url": os.getenv("SPATIUS_E2E_INGRESS_ENDPOINT", "").strip(),
+    }
+
+
 @unittest.skipUnless(
-    os.getenv("AVATARKIT_RUN_E2E") == "1",
-    "Set AVATARKIT_RUN_E2E=1 to run end-to-end network tests",
+    os.getenv("SPATIUS_RUN_E2E") == "1",
+    "Set SPATIUS_RUN_E2E=1 to run end-to-end network tests",
 )
 class TestE2EErrors(unittest.IsolatedAsyncioTestCase):
     async def test_start_with_bogus_credentials_surfaces_structured_error(self):
         session = new_avatar_session(
-            ingress_endpoint_url=os.getenv(
-                "AVATARKIT_E2E_INGRESS_ENDPOINT", _DEFAULT_E2E_INGRESS_ENDPOINT
-            ),
-            console_endpoint_url="https://console.example.com",
+            **_endpoint_kwargs(),
             api_key="unused-for-this-test",
             avatar_id="e2e-invalid-avatar",
             app_id="e2e-invalid-app",
@@ -63,22 +65,19 @@ class TestE2EErrors(unittest.IsolatedAsyncioTestCase):
 
     async def test_start_with_missing_avatar_surfaces_avatar_not_found(self):
         env = _require_env(
-            "AVATARKIT_E2E_API_KEY",
-            "AVATARKIT_E2E_APP_ID",
-            "AVATARKIT_E2E_CONSOLE_ENDPOINT",
-            "AVATARKIT_E2E_INGRESS_ENDPOINT",
+            "SPATIUS_E2E_API_KEY",
+            "SPATIUS_E2E_APP_ID",
         )
 
         missing_avatar_id = os.getenv(
-            "AVATARKIT_E2E_MISSING_AVATAR_ID",
-            "avatarkit-e2e-missing-avatar-404",
+            "SPATIUS_E2E_MISSING_AVATAR_ID",
+            "spatius-e2e-missing-avatar-404",
         ).strip()
 
         session = new_avatar_session(
-            api_key=env["AVATARKIT_E2E_API_KEY"],
-            app_id=env["AVATARKIT_E2E_APP_ID"],
-            console_endpoint_url=env["AVATARKIT_E2E_CONSOLE_ENDPOINT"],
-            ingress_endpoint_url=env["AVATARKIT_E2E_INGRESS_ENDPOINT"],
+            api_key=env["SPATIUS_E2E_API_KEY"],
+            app_id=env["SPATIUS_E2E_APP_ID"],
+            **_endpoint_kwargs(),
             avatar_id=missing_avatar_id,
             expire_at=datetime.now(timezone.utc) + timedelta(minutes=5),
         )
@@ -105,31 +104,28 @@ class TestE2EErrors(unittest.IsolatedAsyncioTestCase):
         self,
     ):
         env = _require_env(
-            "AVATARKIT_E2E_API_KEY",
-            "AVATARKIT_E2E_APP_ID",
-            "AVATARKIT_E2E_CONSOLE_ENDPOINT",
-            "AVATARKIT_E2E_INGRESS_ENDPOINT",
-            "AVATARKIT_E2E_AVATAR_ID",
-            "AVATARKIT_E2E_LIVEKIT_URL",
+            "SPATIUS_E2E_API_KEY",
+            "SPATIUS_E2E_APP_ID",
+            "SPATIUS_E2E_AVATAR_ID",
+            "SPATIUS_E2E_LIVEKIT_URL",
         )
 
         session = new_avatar_session(
-            api_key=env["AVATARKIT_E2E_API_KEY"],
-            app_id=env["AVATARKIT_E2E_APP_ID"],
-            console_endpoint_url=env["AVATARKIT_E2E_CONSOLE_ENDPOINT"],
-            ingress_endpoint_url=env["AVATARKIT_E2E_INGRESS_ENDPOINT"],
-            avatar_id=env["AVATARKIT_E2E_AVATAR_ID"],
+            api_key=env["SPATIUS_E2E_API_KEY"],
+            app_id=env["SPATIUS_E2E_APP_ID"],
+            **_endpoint_kwargs(),
+            avatar_id=env["SPATIUS_E2E_AVATAR_ID"],
             expire_at=datetime.now(timezone.utc) + timedelta(minutes=5),
             livekit_egress=LiveKitEgressConfig(
-                url=env["AVATARKIT_E2E_LIVEKIT_URL"],
-                api_token="avatarkit-e2e-invalid-livekit-token",
+                url=env["SPATIUS_E2E_LIVEKIT_URL"],
+                api_token="spatius-e2e-invalid-livekit-token",
                 room_name=os.getenv(
-                    "AVATARKIT_E2E_LIVEKIT_ROOM_NAME",
-                    "avatarkit-e2e-invalid-token-room",
+                    "SPATIUS_E2E_LIVEKIT_ROOM_NAME",
+                    "spatius-e2e-invalid-token-room",
                 ).strip(),
                 publisher_id=os.getenv(
-                    "AVATARKIT_E2E_LIVEKIT_PUBLISHER_ID",
-                    "avatarkit-e2e-invalid-token-publisher",
+                    "SPATIUS_E2E_LIVEKIT_PUBLISHER_ID",
+                    "spatius-e2e-invalid-token-publisher",
                 ).strip(),
             ),
         )

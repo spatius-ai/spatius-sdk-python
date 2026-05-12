@@ -4,13 +4,13 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from avatarkit import (
+from spatius import (
     AudioFormat,
     OggOpusEncoderConfig,
     SessionTokenError,
     new_avatar_session,
 )
-from avatarkit.proto.generated import message_pb2
+from spatius.proto.generated import message_pb2
 
 
 def _require_env(*names: str) -> dict[str, str]:
@@ -25,6 +25,14 @@ def _require_env(*names: str) -> dict[str, str]:
     if missing:
         raise unittest.SkipTest("Missing required e2e env vars: " + ", ".join(missing))
     return values
+
+
+def _endpoint_kwargs() -> dict[str, str]:
+    return {
+        "region": os.getenv("SPATIUS_E2E_REGION", "us-west").strip() or "us-west",
+        "console_endpoint_url": os.getenv("SPATIUS_E2E_CONSOLE_ENDPOINT", "").strip(),
+        "ingress_endpoint_url": os.getenv("SPATIUS_E2E_INGRESS_ENDPOINT", "").strip(),
+    }
 
 
 class _AnimationCollector:
@@ -68,30 +76,28 @@ class _AnimationCollector:
 
 
 @unittest.skipUnless(
-    os.getenv("AVATARKIT_RUN_E2E") == "1",
-    "Set AVATARKIT_RUN_E2E=1 to run end-to-end network tests",
+    os.getenv("SPATIUS_RUN_E2E") == "1",
+    "Set SPATIUS_RUN_E2E=1 to run end-to-end network tests",
 )
 class TestE2ERequest(unittest.IsolatedAsyncioTestCase):
     async def test_send_audio_receives_animation_frames(self):
         env = _require_env(
-            "AVATARKIT_E2E_API_KEY",
-            "AVATARKIT_E2E_APP_ID",
-            "AVATARKIT_E2E_CONSOLE_ENDPOINT",
-            "AVATARKIT_E2E_INGRESS_ENDPOINT",
-            "AVATARKIT_E2E_AVATAR_ID",
+            "SPATIUS_E2E_API_KEY",
+            "SPATIUS_E2E_APP_ID",
+            "SPATIUS_E2E_AVATAR_ID",
         )
 
         audio_format = AudioFormat(
-            os.getenv("AVATARKIT_E2E_AUDIO_FORMAT", AudioFormat.PCM_S16LE.value)
+            os.getenv("SPATIUS_E2E_AUDIO_FORMAT", AudioFormat.PCM_S16LE.value)
             .strip()
             .lower()
         )
         use_internal_ogg_opus_encoder = _env_flag(
-            "AVATARKIT_E2E_USE_INTERNAL_OGG_OPUS_ENCODER"
+            "SPATIUS_E2E_USE_INTERNAL_OGG_OPUS_ENCODER"
         )
         sample_rate = int(
             os.getenv(
-                "AVATARKIT_E2E_SAMPLE_RATE",
+                "SPATIUS_E2E_SAMPLE_RATE",
                 (
                     "16000"
                     if audio_format == AudioFormat.OGG_OPUS
@@ -102,13 +108,13 @@ class TestE2ERequest(unittest.IsolatedAsyncioTestCase):
                 ),
             )
         )
-        bitrate = int(os.getenv("AVATARKIT_E2E_BITRATE", "32000"))
-        timeout_seconds = float(os.getenv("AVATARKIT_E2E_TIMEOUT_SECONDS", "45"))
-        chunk_size = int(os.getenv("AVATARKIT_E2E_CHUNK_SIZE", "4096"))
+        bitrate = int(os.getenv("SPATIUS_E2E_BITRATE", "32000"))
+        timeout_seconds = float(os.getenv("SPATIUS_E2E_TIMEOUT_SECONDS", "45"))
+        chunk_size = int(os.getenv("SPATIUS_E2E_CHUNK_SIZE", "4096"))
         audio_path = Path(
             os.getenv(
-                "AVATARKIT_E2E_AUDIO_PATH",
-                "audio_16000.pcm"
+                "SPATIUS_E2E_AUDIO_PATH",
+                "tests/fixtures/audio/audio_16000.pcm"
                 if audio_format == AudioFormat.PCM_S16LE
                 or use_internal_ogg_opus_encoder
                 else "audio.ogg",
@@ -123,11 +129,10 @@ class TestE2ERequest(unittest.IsolatedAsyncioTestCase):
         audio_bytes = audio_path.read_bytes()
         collector = _AnimationCollector()
         session = new_avatar_session(
-            api_key=env["AVATARKIT_E2E_API_KEY"],
-            app_id=env["AVATARKIT_E2E_APP_ID"],
-            console_endpoint_url=env["AVATARKIT_E2E_CONSOLE_ENDPOINT"],
-            ingress_endpoint_url=env["AVATARKIT_E2E_INGRESS_ENDPOINT"],
-            avatar_id=env["AVATARKIT_E2E_AVATAR_ID"],
+            api_key=env["SPATIUS_E2E_API_KEY"],
+            app_id=env["SPATIUS_E2E_APP_ID"],
+            **_endpoint_kwargs(),
+            avatar_id=env["SPATIUS_E2E_AVATAR_ID"],
             expire_at=datetime.now(timezone.utc) + timedelta(minutes=5),
             sample_rate=sample_rate,
             bitrate=bitrate,

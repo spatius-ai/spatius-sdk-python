@@ -1,5 +1,5 @@
 #!/bin/bash
-# Local testing script for spatius-sdk-python
+# Local testing script for spatius
 # Tests across multiple Python versions and dependency combinations
 
 set -e

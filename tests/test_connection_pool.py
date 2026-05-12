@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from unittest.mock import patch
 
-from avatarkit.proto.generated import message_pb2
+from spatius.proto.generated import message_pb2
 
 
 class _DummyTask:
@@ -232,9 +232,9 @@ class TestAvatarConnectionPool(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
-            patch("avatarkit.avatar_session.websockets.connect", new=fake_connect),
-            patch("avatarkit.avatar_session.asyncio.create_task", new=fake_create_task),
-            patch("avatarkit.avatar_session.AvatarSession.init", new=fake_init),
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
+            patch("spatius.avatar_session.AvatarSession.init", new=fake_init),
         ):
             await pool.initialize()
 
@@ -281,9 +281,9 @@ class TestAvatarConnectionPool(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
-            patch("avatarkit.avatar_session.websockets.connect", new=fake_connect),
-            patch("avatarkit.avatar_session.asyncio.create_task", new=fake_create_task),
-            patch("avatarkit.avatar_session.AvatarSession.init", new=fake_init),
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
+            patch("spatius.avatar_session.AvatarSession.init", new=fake_init),
         ):
             await pool.initialize()
 
@@ -338,9 +338,9 @@ class TestAvatarConnectionPool(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
-            patch("avatarkit.avatar_session.websockets.connect", new=fake_connect),
-            patch("avatarkit.avatar_session.asyncio.create_task", new=fake_create_task),
-            patch("avatarkit.avatar_session.AvatarSession.init", new=fake_init),
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
+            patch("spatius.avatar_session.AvatarSession.init", new=fake_init),
         ):
             await pool.initialize()
 
@@ -416,9 +416,9 @@ class TestAvatarConnectionPool(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
-            patch("avatarkit.avatar_session.websockets.connect", new=fake_connect),
-            patch("avatarkit.avatar_session.asyncio.create_task", new=fake_create_task),
-            patch("avatarkit.avatar_session.AvatarSession.init", new=fake_init),
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
+            patch("spatius.avatar_session.AvatarSession.init", new=fake_init),
         ):
             await pool.initialize()
 
@@ -509,9 +509,9 @@ class TestConcurrentAudioProcessing(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
-            patch("avatarkit.avatar_session.websockets.connect", new=fake_connect),
-            patch("avatarkit.avatar_session.asyncio.create_task", new=fake_create_task),
-            patch("avatarkit.avatar_session.AvatarSession.init", new=fake_init),
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
+            patch("spatius.avatar_session.AvatarSession.init", new=fake_init),
         ):
             await pool.initialize()
 
@@ -617,9 +617,9 @@ class TestLongLivedConnections(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
-            patch("avatarkit.avatar_session.websockets.connect", new=fake_connect),
-            patch("avatarkit.avatar_session.asyncio.create_task", new=fake_create_task),
-            patch("avatarkit.avatar_session.AvatarSession.init", new=fake_init),
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
+            patch("spatius.avatar_session.AvatarSession.init", new=fake_init),
         ):
             await pool.initialize()
 
@@ -728,11 +728,11 @@ class TestLongLivedConnections(unittest.IsolatedAsyncioTestCase):
             pool_main.datetime = MockDateTime()
 
             with (
-                patch("avatarkit.avatar_session.websockets.connect", new=fake_connect),
+                patch("spatius.avatar_session.websockets.connect", new=fake_connect),
                 patch(
-                    "avatarkit.avatar_session.asyncio.create_task", new=fake_create_task
+                    "spatius.avatar_session.asyncio.create_task", new=fake_create_task
                 ),
-                patch("avatarkit.avatar_session.AvatarSession.init", new=fake_init),
+                patch("spatius.avatar_session.AvatarSession.init", new=fake_init),
             ):
                 await pool.initialize()
 
@@ -802,9 +802,9 @@ class TestLongLivedConnections(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
-            patch("avatarkit.avatar_session.websockets.connect", new=fake_connect),
-            patch("avatarkit.avatar_session.asyncio.create_task", new=fake_create_task),
-            patch("avatarkit.avatar_session.AvatarSession.init", new=fake_init),
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
+            patch("spatius.avatar_session.AvatarSession.init", new=fake_init),
         ):
             await pool.initialize()
 
@@ -885,9 +885,9 @@ class TestLongLivedConnections(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
-            patch("avatarkit.avatar_session.websockets.connect", new=fake_connect),
-            patch("avatarkit.avatar_session.asyncio.create_task", new=fake_create_task),
-            patch("avatarkit.avatar_session.AvatarSession.init", new=fake_init),
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
+            patch("spatius.avatar_session.AvatarSession.init", new=fake_init),
         ):
             await pool.initialize()
 
@@ -966,9 +966,9 @@ class TestLongLivedConnections(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
-            patch("avatarkit.avatar_session.websockets.connect", new=fake_connect),
-            patch("avatarkit.avatar_session.asyncio.create_task", new=fake_create_task),
-            patch("avatarkit.avatar_session.AvatarSession.init", new=fake_init),
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
+            patch("spatius.avatar_session.AvatarSession.init", new=fake_init),
         ):
             await pool.initialize()
 
