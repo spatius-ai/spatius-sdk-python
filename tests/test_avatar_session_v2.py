@@ -148,6 +148,18 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
             "wss://api.eu-central.spatius.ai/v2/driveningress",
         )
 
+    def test_new_avatar_session_defaults_cn_endpoints_from_region(self):
+        session = new_avatar_session(region="cn-beijing")
+
+        self.assertEqual(
+            session.config.console_endpoint_url,
+            "https://console.cn-beijing.spatialwalk.top/v1/console",
+        )
+        self.assertEqual(
+            session.config.ingress_endpoint_url,
+            "wss://api.cn-beijing.spatialwalk.top/v2/driveningress",
+        )
+
     def test_new_avatar_session_explicit_endpoints_override_region(self):
         session = new_avatar_session(
             region="eu-central",

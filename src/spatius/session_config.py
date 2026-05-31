@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 
 DEFAULT_REGION = "us-west"
+CN_REGION_PREFIX = "cn-"
 
 
 class AudioFormat(str, Enum):
@@ -112,6 +113,20 @@ class AgoraEgressConfig:
     publisher_id: str = ""
 
 
+def _endpoint_domain_for_region(region: str) -> str:
+    if region.startswith(CN_REGION_PREFIX):
+        return "spatialwalk.top"
+    return "spatius.ai"
+
+
+def _console_endpoint_url_for_region(region: str) -> str:
+    return f"https://console.{region}.{_endpoint_domain_for_region(region)}/v1/console"
+
+
+def _ingress_endpoint_url_for_region(region: str) -> str:
+    return f"wss://api.{region}.{_endpoint_domain_for_region(region)}/v2/driveningress"
+
+
 @dataclass
 class SessionConfig:
     """
@@ -177,13 +192,9 @@ class SessionConfig:
         self.audio_format = AudioFormat(self.audio_format)
         self.region = self.region.strip()
         if self.region and not self.console_endpoint_url:
-            self.console_endpoint_url = (
-                f"https://console.{self.region}.spatius.ai/v1/console"
-            )
+            self.console_endpoint_url = _console_endpoint_url_for_region(self.region)
         if self.region and not self.ingress_endpoint_url:
-            self.ingress_endpoint_url = (
-                f"wss://api.{self.region}.spatius.ai/v2/driveningress"
-            )
+            self.ingress_endpoint_url = _ingress_endpoint_url_for_region(self.region)
 
 
 def _noop_transport_frames(data: bytes, last: bool) -> None:
