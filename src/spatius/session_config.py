@@ -41,12 +41,13 @@ class OggOpusEncoderConfig:
     Attributes:
         frame_duration_ms: Opus frame duration in milliseconds. Supported values are
             10, 20, 40, and 60.
-        application: Opus encoder application mode. Defaults to ``voip``. Supported
-            values are ``audio``, ``voip``, and ``restricted_lowdelay``.
+        application: Opus encoder application mode. Defaults to
+            ``restricted_lowdelay``. Supported values are ``audio``, ``voip``, and
+            ``restricted_lowdelay``.
     """
 
     frame_duration_ms: int = 20
-    application: str = "voip"
+    application: str = "restricted_lowdelay"
 
 
 @dataclass

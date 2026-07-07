@@ -232,7 +232,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--application",
         choices=("audio", "voip", "restricted_lowdelay"),
-        default="voip",
+        default="restricted_lowdelay",
         help="Opus encoder application mode",
     )
     parser.add_argument(
