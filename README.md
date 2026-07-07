@@ -52,6 +52,16 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+## Benchmarks
+
+Benchmark the built-in PCM to Ogg Opus encoder from a source checkout:
+
+```bash
+uv run --extra opus python benchmarks/bench_ogg_opus_encoder.py
+```
+
+Use `--help` to see options for sample rate, bitrate, frame duration, input chunk size, and run count.
+
 ## Documentation
 
 See the full Python SDK guide at [docs.spatius.ai/sdk-reference/python-sdk/python-sdk](https://docs.spatius.ai/sdk-reference/python-sdk/python-sdk).

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Callable, Optional, Union, TYPE_CHECKING
+from typing import Callable, Optional, TYPE_CHECKING
 import warnings
 
 if TYPE_CHECKING:
@@ -41,12 +41,12 @@ class OggOpusEncoderConfig:
     Attributes:
         frame_duration_ms: Opus frame duration in milliseconds. Supported values are
             10, 20, 40, and 60.
-        application: Opus encoder application mode. Supported values are ``audio``,
-            ``voip``, and ``restricted_lowdelay``.
+        application: Opus encoder application mode. Defaults to ``voip``. Supported
+            values are ``audio``, ``voip``, and ``restricted_lowdelay``.
     """
 
     frame_duration_ms: int = 20
-    application: str = "audio"
+    application: str = "voip"
 
 
 @dataclass
