@@ -1,3 +1,4 @@
+import ctypes
 import sys
 import types
 import unittest
@@ -26,6 +27,25 @@ class _FakeEncoder:
 
 
 class TestAudioEncoder(unittest.TestCase):
+    def test_ensure_opuslib_encoder_ctl_signature_sets_fixed_varargs(self):
+        fake_libopus_ctl = types.SimpleNamespace(argtypes=None)
+        fake_encoder_pointer = object()
+        fake_opuslib = types.SimpleNamespace(
+            api=types.SimpleNamespace(
+                encoder=types.SimpleNamespace(
+                    libopus_ctl=fake_libopus_ctl,
+                    EncoderPointer=fake_encoder_pointer,
+                )
+            )
+        )
+
+        OggOpusStreamEncoder._ensure_opuslib_encoder_ctl_signature(fake_opuslib)
+
+        self.assertEqual(
+            fake_libopus_ctl.argtypes,
+            (fake_encoder_pointer, ctypes.c_int),
+        )
+
     def test_create_encoder_logs_warning_when_bitrate_ctl_fails(self):
         fake_opuslib = types.ModuleType("opuslib")
         fake_opuslib.Encoder = _FakeEncoder
