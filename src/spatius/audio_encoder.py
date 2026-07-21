@@ -69,6 +69,7 @@ class OggOpusStreamEncoder:
         self._page_sequence = 0
         self._stream_serial = secrets.randbits(32)
         self._total_input_samples = 0
+        self._encoded_frame_samples = 0
         self._encoded_output: Optional[bytearray] = (
             bytearray() if collect_encoded_output else None
         )
@@ -88,6 +89,7 @@ class OggOpusStreamEncoder:
 
         if end:
             self._flush_final_frame(payload)
+            self._pad_for_pre_skip(payload)
             self._finalize_stream(payload)
 
         completed_stream = None
@@ -124,7 +126,8 @@ class OggOpusStreamEncoder:
 
         packet = self._encoder.encode(pcm_frame, self._frame_size)
         self._total_input_samples += actual_samples
-        granule = self._pre_skip + self._total_input_samples * self._sample_scale
+        self._encoded_frame_samples += self._frame_size
+        granule = self._encoded_frame_samples * self._sample_scale
 
         if self._pending_packet is not None:
             self._write_page(payload, self._pending_packet, self._pending_granule)
@@ -132,12 +135,25 @@ class OggOpusStreamEncoder:
         self._pending_packet = packet
         self._pending_granule = granule
 
+    def _pad_for_pre_skip(self, payload: bytearray) -> None:
+        if self._encoded_frame_samples == 0:
+            return
+
+        final_granule = (
+            self._pre_skip + self._total_input_samples * self._sample_scale
+        )
+        while self._encoded_frame_samples * self._sample_scale < final_granule:
+            self._queue_audio_packet(payload, b"\x00" * self._frame_bytes, 0)
+
     def _finalize_stream(self, payload: bytearray) -> None:
         if self._pending_packet is not None:
+            final_granule = (
+                self._pre_skip + self._total_input_samples * self._sample_scale
+            )
             self._write_page(
                 payload,
                 self._pending_packet,
-                self._pending_granule,
+                final_granule,
                 end_of_stream=True,
             )
             self._pending_packet = None
@@ -237,9 +253,6 @@ class OggOpusStreamEncoder:
             size -= 255
 
         segments.append(size)
-        if len(packet) % 255 == 0:
-            segments.append(0)
-
         return bytes(segments)
 
     @classmethod
@@ -291,7 +304,36 @@ class OggOpusStreamEncoder:
                     exc_info=exc,
                 )
 
+        OggOpusStreamEncoder._configure_quality_controls(opuslib, encoder)
         return encoder
+
+    @staticmethod
+    def _configure_quality_controls(opuslib, encoder) -> None:
+        """Apply the fixed controls used by the SDK's Opus quality baseline."""
+        try:
+            encoder_ctl = opuslib.api.encoder.encoder_ctl
+            controls = (
+                ("VBR", opuslib.api.ctl.set_vbr, 1),
+                ("complexity", opuslib.api.ctl.set_complexity, 10),
+                ("signal", opuslib.api.ctl.set_signal, opuslib.AUTO),
+                ("LSB depth", opuslib.api.ctl.set_lsb_depth, 16),
+                ("DTX", opuslib.api.ctl.set_dtx, 0),
+                ("in-band FEC", opuslib.api.ctl.set_inband_fec, 0),
+            )
+        except AttributeError:
+            # Test doubles or alternate opuslib-compatible implementations may not
+            # expose low-level CTL helpers.
+            return
+
+        for name, request, value in controls:
+            try:
+                encoder_ctl(encoder.encoder_state, request, value)
+            except opuslib.exceptions.OpusError as exc:
+                logger.warning(
+                    "Failed to configure Opus encoder quality control",
+                    extra={"control": name, "value": value},
+                    exc_info=exc,
+                )
 
     @staticmethod
     def _ensure_opuslib_encoder_ctl_signature(opuslib) -> None:
