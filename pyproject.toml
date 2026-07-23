@@ -6,13 +6,12 @@ readme = "README.md"
 authors = [
     { name = "3DRX", email = "3drxkjy@gmail.com" }
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 keywords = ["avatar", "websocket", "sdk", "audio", "animation", "protobuf"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -28,7 +27,7 @@ dependencies = [
 
 [project.optional-dependencies]
 opus = [
-    "opuslib>=3.0.1",
+    "opuslib-next>=1.3.0",
 ]
 
 [build-system]
@@ -55,9 +54,4 @@ dev = [
     "pytest>=7.0.0",
     "ruff>=0.14.14",
     "tox>=4.0.0",
-]
-
-[tool.pytest.ini_options]
-filterwarnings = [
-    "ignore:\"is not\" with 'int' literal\\. Did you mean \"!=\"\\?:SyntaxWarning:opuslib\\.api\\.decoder",
 ]

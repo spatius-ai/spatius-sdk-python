@@ -18,8 +18,8 @@ pytest tests/test_avatar_session_v2.py
 pytest tests/test_avatar_session_v2.py::TestAvatarSessionV2::test_init_success
 
 # Test across multiple Python versions locally
-./test-local.sh all          # Test all Python versions (3.9-3.13) with all dependency combinations
-./test-local.sh py39         # Test Python 3.9 only
+./test-local.sh all          # Test all Python versions (3.10-3.14) with all dependency combinations
+./test-local.sh py310        # Test Python 3.10 only
 ./test-local.sh min          # Test minimum dependency versions on all Python versions
 ./test-local.sh latest       # Test latest dependency versions on all Python versions
 ./test-local.sh quick        # Quick test on current Python version

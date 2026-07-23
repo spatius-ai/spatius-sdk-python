@@ -1,4 +1,3 @@
-import ctypes
 import gc
 import importlib.util
 import math
@@ -12,7 +11,7 @@ from unittest.mock import patch
 from spatius.audio_encoder import OggOpusStreamEncoder
 
 
-_HAS_OPUSLIB = importlib.util.find_spec("opuslib") is not None
+_HAS_OPUSLIB = importlib.util.find_spec("opuslib_next") is not None
 
 
 def _generate_speech_like_pcm(sample_rate: int, duration_seconds: int) -> bytes:
@@ -107,9 +106,9 @@ class _FakeEncoder:
 
 
 class TestAudioEncoder(unittest.TestCase):
-    @unittest.skipUnless(_HAS_OPUSLIB, "opuslib is required for audio quality tests")
+    @unittest.skipUnless(_HAS_OPUSLIB, "opuslib-next is required for audio quality tests")
     def test_audio_64k_quality_and_timing_meet_codec_gate(self):
-        import opuslib
+        import opuslib_next as opuslib
 
         sample_rate = 24000
         frame_duration_ms = 20
@@ -177,7 +176,7 @@ class TestAudioEncoder(unittest.TestCase):
         self.assertEqual(len(decoded), len(pcm))
         self.assertGreaterEqual(_pcm_cosine(pcm, decoded), 0.99)
 
-    @unittest.skipUnless(_HAS_OPUSLIB, "opuslib is required for memory leak tests")
+    @unittest.skipUnless(_HAS_OPUSLIB, "opuslib-next is required for memory leak tests")
     def test_long_running_stream_does_not_accumulate_memory(self):
         frame_duration_ms = 20
         encoder = OggOpusStreamEncoder(
@@ -226,32 +225,13 @@ class TestAudioEncoder(unittest.TestCase):
             b"\xff\x00",
         )
 
-    def test_ensure_opuslib_encoder_ctl_signature_sets_fixed_varargs(self):
-        fake_libopus_ctl = types.SimpleNamespace(argtypes=None)
-        fake_encoder_pointer = object()
-        fake_opuslib = types.SimpleNamespace(
-            api=types.SimpleNamespace(
-                encoder=types.SimpleNamespace(
-                    libopus_ctl=fake_libopus_ctl,
-                    EncoderPointer=fake_encoder_pointer,
-                )
-            )
-        )
-
-        OggOpusStreamEncoder._ensure_opuslib_encoder_ctl_signature(fake_opuslib)
-
-        self.assertEqual(
-            fake_libopus_ctl.argtypes,
-            (fake_encoder_pointer, ctypes.c_int),
-        )
-
     def test_create_encoder_logs_warning_when_bitrate_ctl_fails(self):
-        fake_opuslib = types.ModuleType("opuslib")
+        fake_opuslib = types.ModuleType("opuslib_next")
         fake_opuslib.Encoder = _FakeEncoder
         fake_opuslib.exceptions = types.SimpleNamespace(OpusError=_FakeOpusError)
 
         with (
-            patch.dict(sys.modules, {"opuslib": fake_opuslib}),
+            patch.dict(sys.modules, {"opuslib_next": fake_opuslib}),
             self.assertLogs("spatius.audio_encoder", level="WARNING") as logs,
         ):
             encoder = OggOpusStreamEncoder._create_encoder(24000, 32000, "audio")
