@@ -23,7 +23,7 @@ from spatius import (
 )
 from spatius.proto.generated import message_pb2
 
-_HAS_OPUSLIB = importlib.util.find_spec("opuslib") is not None
+_HAS_OPUSLIB = importlib.util.find_spec("opuslib_next") is not None
 
 
 class _DummyTask:
@@ -464,7 +464,9 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
 
         await session.close()
 
-    @unittest.skipUnless(_HAS_OPUSLIB, "opuslib is required for internal encoder tests")
+    @unittest.skipUnless(
+        _HAS_OPUSLIB, "opuslib-next is required for internal encoder tests"
+    )
     async def test_send_audio_internal_encoder_outputs_ogg_opus_and_callback(self):
         async def fake_connect(url, additional_headers=None, **_kwargs):
             return _FakeWebSocket(recv_messages=[_mk_confirm("server-conn")])
@@ -512,7 +514,9 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
 
         await session.close()
 
-    @unittest.skipUnless(_HAS_OPUSLIB, "opuslib is required for internal encoder tests")
+    @unittest.skipUnless(
+        _HAS_OPUSLIB, "opuslib-next is required for internal encoder tests"
+    )
     async def test_send_audio_logs_callback_errors(self):
         async def fake_connect(url, additional_headers=None, **_kwargs):
             return _FakeWebSocket(recv_messages=[_mk_confirm("server-conn")])
@@ -549,7 +553,9 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
 
         await session.close()
 
-    @unittest.skipUnless(_HAS_OPUSLIB, "opuslib is required for internal encoder tests")
+    @unittest.skipUnless(
+        _HAS_OPUSLIB, "opuslib-next is required for internal encoder tests"
+    )
     async def test_send_audio_internal_encoder_buffers_until_frame_ready(self):
         async def fake_connect(url, additional_headers=None, **_kwargs):
             return _FakeWebSocket(recv_messages=[_mk_confirm("server-conn")])

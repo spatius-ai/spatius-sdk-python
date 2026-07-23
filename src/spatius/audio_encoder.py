@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import ctypes
 import logging
 import secrets
 import struct
@@ -284,14 +283,12 @@ class OggOpusStreamEncoder:
     @staticmethod
     def _create_encoder(sample_rate: int, bitrate: int, application: str):
         try:
-            import opuslib
+            import opuslib_next as opuslib
         except ImportError as exc:  # pragma: no cover - exercised by runtime users
             raise RuntimeError(
                 "Internal Ogg Opus encoding requires the optional opus dependency. "
                 "Install spatius[opus] to enable it."
             ) from exc
-
-        OggOpusStreamEncoder._ensure_opuslib_encoder_ctl_signature(opuslib)
 
         encoder = opuslib.Encoder(sample_rate, 1, application)
         if bitrate > 0:
@@ -334,27 +331,6 @@ class OggOpusStreamEncoder:
                     extra={"control": name, "value": value},
                     exc_info=exc,
                 )
-
-    @staticmethod
-    def _ensure_opuslib_encoder_ctl_signature(opuslib) -> None:
-        """
-        Ensure opuslib passes opus_encoder_ctl's fixed arguments correctly.
-
-        opus_encoder_ctl is a C varargs function. Some opuslib versions do not set
-        ctypes argtypes for its fixed arguments, which can make CTL calls such as
-        OPUS_SET_BITRATE fail with OPUS_BAD_ARG even for valid bitrates on newer
-        Python/ctypes versions.
-        """
-        try:
-            encoder_api = opuslib.api.encoder
-            encoder_api.libopus_ctl.argtypes = (
-                encoder_api.EncoderPointer,
-                ctypes.c_int,
-            )
-        except AttributeError:
-            # Test doubles or alternate opuslib-compatible implementations may not
-            # expose the low-level ctypes API. In that case, keep the existing behavior.
-            return
 
     @classmethod
     def _ogg_crc(cls, data: bytes) -> int:
