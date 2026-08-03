@@ -38,6 +38,8 @@ This is a Python SDK for WebSocket-based avatar services with audio streaming an
 
 - **`session_config.py`** - `SessionConfig` dataclass, `LiveKitEgressConfig` dataclass, `AgoraEgressConfig` dataclass, and typed `new_avatar_session()` factory for session configuration.
 
+- **`bootstrap.py`** - Global bootstrap API client. `resolve_region()` resolves `region="auto"` into a concrete ingress region via `POST https://global.spatialwalk.top/bootstrap` (request: app_id, sdk_version, region, platform; 5s timeout). Falls back to a process-level cached region or `DEFAULT_REGION` ("us-west") on failure and never raises.
+
 - **`errors.py`** - `AvatarSDKError` exception with stable error codes (`AvatarSDKErrorCode` enum). Error codes: `sessionTokenExpired`, `sessionTokenInvalid`, `appIDUnrecognized`, `unknown`.
 
 - **`logid.py`** - `generate_log_id()` utility for generating unique log IDs in format "YYYYMMDDHHMMSS_<nanoid>".
@@ -47,7 +49,7 @@ This is a Python SDK for WebSocket-based avatar services with audio streaming an
 ### Session Flow
 
 1. `new_avatar_session()` creates configuration
-2. `session.init()` - HTTP POST to console API for session token
+2. `session.init()` - Resolves `region="auto"` (the default) via the bootstrap API and composes endpoint URLs (skipped when a concrete region or explicit endpoint URLs are configured), then HTTP POST to console API for session token
 3. `session.start()` - WebSocket connection + v2 handshake, returns connection_id
 4. `session.send_audio()` - Send PCM audio via protobuf
 5. Background read loop delivers animation frames via `transport_frames` callback
