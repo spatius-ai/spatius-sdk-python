@@ -15,6 +15,11 @@ if TYPE_CHECKING:
 DEFAULT_REGION = "us-west"
 CN_REGION_PREFIX = "cn-"
 
+# Sentinel meaning "let the global bootstrap API schedule the ingress region".
+# This is the default when the user does not pin a region; it is not a usable
+# region by itself and is resolved in ``AvatarSession.init()``.
+DEFAULT_REGION_REQUEST = "auto"
+
 
 class AudioFormat(str, Enum):
     """
@@ -158,7 +163,10 @@ class SessionConfig:
         on_error: Callback for error handling.
         on_close: Callback invoked when session closes.
         region: Spatius region used to compose endpoint URLs when explicit URLs are not
-            provided. Defaults to "us-west".
+            provided. Defaults to "auto", which resolves the recommended region via the
+            global bootstrap API during ``AvatarSession.init()``. Pass a concrete region
+            (e.g. "us-west") to skip resolution, or explicit endpoint URLs to override
+            region composition entirely.
         console_endpoint_url: URL for the console API endpoint.
         ingress_endpoint_url: URL for the ingress websocket endpoint.
         livekit_egress: If set, enables LiveKit egress mode - audio and animation are
@@ -182,7 +190,7 @@ class SessionConfig:
     )
     on_error: Callable[[Exception], None] = field(default=lambda err: None)
     on_close: Callable[[], None] = field(default=lambda: None)
-    region: str = DEFAULT_REGION
+    region: str = DEFAULT_REGION_REQUEST
     console_endpoint_url: str = ""
     ingress_endpoint_url: str = ""
     livekit_egress: Optional[LiveKitEgressConfig] = None
@@ -191,9 +199,24 @@ class SessionConfig:
     def __post_init__(self) -> None:
         self.audio_format = AudioFormat(self.audio_format)
         self.region = self.region.strip()
-        if self.region and not self.console_endpoint_url:
+        if self._has_concrete_region():
+            self.apply_resolved_region(self.region)
+
+    def _has_concrete_region(self) -> bool:
+        return bool(self.region) and self.region != DEFAULT_REGION_REQUEST
+
+    def apply_resolved_region(self, region: str) -> None:
+        """
+        Set a concrete region and compose any missing endpoint URLs from it.
+
+        Explicitly configured endpoint URLs are always preserved. Called by
+        ``AvatarSession.init()`` after ``auto`` region resolution, and at
+        construction time when a concrete region was given.
+        """
+        self.region = region.strip()
+        if not self.console_endpoint_url:
             self.console_endpoint_url = _console_endpoint_url_for_region(self.region)
-        if self.region and not self.ingress_endpoint_url:
+        if not self.ingress_endpoint_url:
             self.ingress_endpoint_url = _ingress_endpoint_url_for_region(self.region)
 
 
@@ -224,7 +247,7 @@ def new_avatar_session(
     transport_frames: Callable[[bytes, bool], None] = _noop_transport_frames,
     on_error: Callable[[Exception], None] = _noop_error,
     on_close: Callable[[], None] = _noop_close,
-    region: str = DEFAULT_REGION,
+    region: str = DEFAULT_REGION_REQUEST,
     console_endpoint_url: str = "",
     ingress_endpoint_url: str = "",
     livekit_egress: Optional[LiveKitEgressConfig] = None,
@@ -249,7 +272,9 @@ def new_avatar_session(
             animation frame payload returned over the WebSocket.
         on_error: Callback invoked for structured SDK/runtime errors.
         on_close: Callback invoked after the session closes.
-        region: Region used to compose default endpoint URLs.
+        region: Region used to compose default endpoint URLs. Defaults to "auto":
+            the recommended region is resolved via the global bootstrap API during
+            ``init()``. Pass a concrete region to skip resolution.
         console_endpoint_url: Optional explicit Console API URL. Overrides ``region``.
         ingress_endpoint_url: Optional explicit ingress WebSocket URL. Overrides
             ``region``.

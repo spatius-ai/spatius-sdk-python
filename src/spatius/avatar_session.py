@@ -11,10 +11,13 @@ import aiohttp
 import websockets
 
 from .audio_encoder import OggOpusStreamEncoder
+from .bootstrap import resolve_region
 from .errors import AvatarSDKError, AvatarSDKErrorCode, SessionTokenError
 from .logid import generate_log_id
 from .proto.generated import message_pb2
 from .session_config import (
+    DEFAULT_REGION,
+    DEFAULT_REGION_REQUEST,
     AudioFormat,
     OggOpusEncoderConfig,
     SessionConfig,
@@ -68,7 +71,8 @@ class AvatarSession:
 
     async def init(self) -> None:
         """
-        Exchange configuration credentials for a session token from the console API.
+        Resolve the ingress region (when set to ``auto``) and exchange
+        configuration credentials for a session token from the console API.
 
         This method must complete successfully before ``start()`` can open the
         WebSocket connection.
@@ -78,6 +82,8 @@ class AvatarSession:
             SessionTokenError: If token creation, response parsing, or server-side
                 token validation fails.
         """
+        await self._ensure_region_resolved()
+
         if not self._config.api_key:
             raise ValueError("Missing API key")
         if not self._config.console_endpoint_url:
@@ -147,6 +153,46 @@ class AvatarSession:
                 )
 
             self._session_token = session_token
+
+    async def _ensure_region_resolved(self) -> None:
+        """
+        Resolve an ``auto`` region via the global bootstrap API and compose the
+        endpoint URLs from the result.
+
+        Resolution only runs when the user relies on region-composed endpoints
+        without pinning a concrete region. It is skipped entirely when:
+
+        - both endpoint URLs were configured explicitly, or
+        - a concrete region was configured (URLs were composed at construction).
+
+        When only some endpoint URLs are explicit, the missing ones are composed
+        from ``DEFAULT_REGION`` (preserving the historical default) instead of
+        calling bootstrap. Resolution failures never raise: the region falls
+        back to the last cached region or ``DEFAULT_REGION``.
+        """
+        config = self._config
+
+        if config.console_endpoint_url and config.ingress_endpoint_url:
+            # Fully explicit endpoints - nothing to compose.
+            return
+
+        if config._has_concrete_region():
+            # Concrete region - compose any URLs still missing (e.g. when the
+            # config was mutated after construction).
+            config.apply_resolved_region(config.region)
+            return
+
+        if config.console_endpoint_url or config.ingress_endpoint_url:
+            # Partially explicit endpoints with an auto region: compose the
+            # remaining URLs from the default region instead of scheduling.
+            config.apply_resolved_region(DEFAULT_REGION)
+            return
+
+        region = await resolve_region(
+            app_id=config.app_id,
+            requested_region=config.region or DEFAULT_REGION_REQUEST,
+        )
+        config.apply_resolved_region(region)
 
     async def start(self) -> str:
         """
