@@ -13,6 +13,11 @@ from .session_config import (
     new_avatar_session,
 )
 from .logid import generate_log_id
+from .telemetry import (
+    DEFAULT_TELEMETRY_ENDPOINT,
+    configure_telemetry,
+    shutdown_telemetry,
+)
 
 try:
     __version__ = version("spatius")
@@ -31,4 +36,7 @@ __all__ = [
     "LiveKitEgressConfig",
     "AgoraEgressConfig",
     "generate_log_id",
+    "DEFAULT_TELEMETRY_ENDPOINT",
+    "configure_telemetry",
+    "shutdown_telemetry",
 ]

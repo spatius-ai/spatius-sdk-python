@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Optional
 
 import aiohttp
 
 from .session_config import DEFAULT_REGION, DEFAULT_REGION_REQUEST
+from .telemetry import record_http_client_duration
 
 logger = logging.getLogger(__name__)
 
@@ -85,17 +87,40 @@ async def fetch_bootstrap(
         "platform": platform,
     }
     client_timeout = aiohttp.ClientTimeout(total=timeout)
+    started_at = time.perf_counter()
+    status_code: Optional[int] = None
     try:
         async with aiohttp.ClientSession(timeout=client_timeout) as session:
             async with session.post(BOOTSTRAP_URL, json=payload) as response:
+                status_code = response.status
                 if response.status != 200:
                     raise BootstrapError(f"bootstrap HTTP {response.status}")
                 body = await response.json()
     except BootstrapError:
+        record_http_client_duration(
+            operation="/bootstrap",
+            method="POST",
+            duration_ms=(time.perf_counter() - started_at) * 1000,
+            status_code=status_code,
+            server_address="global.spatialwalk.top",
+        )
         raise
     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        record_http_client_duration(
+            operation="/bootstrap",
+            method="POST",
+            duration_ms=(time.perf_counter() - started_at) * 1000,
+            server_address="global.spatialwalk.top",
+        )
         raise BootstrapError(f"bootstrap request failed: {e}") from e
 
+    record_http_client_duration(
+        operation="/bootstrap",
+        method="POST",
+        duration_ms=(time.perf_counter() - started_at) * 1000,
+        status_code=status_code,
+        server_address="global.spatialwalk.top",
+    )
     if not isinstance(body, dict):
         raise BootstrapError("bootstrap response is not a JSON object")
     return body

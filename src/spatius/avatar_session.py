@@ -4,6 +4,8 @@ import asyncio
 import inspect
 import json
 import logging
+import time
+from dataclasses import dataclass
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
@@ -22,11 +24,29 @@ from .session_config import (
     OggOpusEncoderConfig,
     SessionConfig,
 )
+from .telemetry import (
+    add_span_event,
+    finish_span,
+    inject_trace_context,
+    record_http_client_duration,
+    record_metric,
+    start_span,
+    telemetry_enabled,
+)
 
 SESSION_TOKEN_PATH = "/session-tokens"
 INGRESS_WEBSOCKET_PATH = "/websocket"
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _RequestTelemetry:
+    span: Any
+    started_at: float
+    audio_bytes: int = 0
+    first_animation_at: Optional[float] = None
+    animation_frame_count: int = 0
 
 
 class AvatarSession:
@@ -63,6 +83,9 @@ class AvatarSession:
         self._audio_encoder: Optional[OggOpusStreamEncoder] = None
         self._read_task: Optional[asyncio.Task] = None
         self._connection_id: Optional[str] = None
+        self._request_telemetry: dict[str, _RequestTelemetry] = {}
+        self._session_started_at: Optional[float] = None
+        self._session_telemetry_finished = False
 
     @property
     def config(self) -> SessionConfig:
@@ -70,17 +93,30 @@ class AvatarSession:
         return self._config
 
     async def init(self) -> None:
+        """Resolve the region and exchange credentials for a session token."""
+        span = start_span(
+            "avatar.session.init",
+            self._telemetry_trace_attributes(),
+        )
+        try:
+            await self._init_internal()
+        except BaseException as error:
+            finish_span(
+                span,
+                attributes={"region": self._config.region},
+                error=error,
+            )
+            raise
+        else:
+            finish_span(
+                span,
+                attributes={"region": self._config.region},
+            )
+
+    async def _init_internal(self) -> None:
         """
         Resolve the ingress region (when set to ``auto``) and exchange
         configuration credentials for a session token from the console API.
-
-        This method must complete successfully before ``start()`` can open the
-        WebSocket connection.
-
-        Raises:
-            ValueError: If required token fields are missing.
-            SessionTokenError: If token creation, response parsing, or server-side
-                token validation fails.
         """
         await self._ensure_region_resolved()
 
@@ -100,6 +136,8 @@ class AvatarSession:
             "Content-Type": "application/json",
         }
 
+        request_started_at = time.perf_counter()
+        server_address = urlparse(endpoint).hostname
         async with aiohttp.ClientSession() as session:
             try:
                 async with session.post(
@@ -107,16 +145,35 @@ class AvatarSession:
                 ) as response:
                     response_text = await response.text()
             except aiohttp.ClientError as e:
+                record_http_client_duration(
+                    operation="/session-tokens",
+                    method="POST",
+                    duration_ms=(time.perf_counter() - request_started_at) * 1000,
+                    server_address=server_address,
+                )
                 raise SessionTokenError(
                     f"Failed to create session token: {e}",
                     code=AvatarSDKErrorCode.connectionFailed,
                 ) from e
             except asyncio.TimeoutError as e:
+                record_http_client_duration(
+                    operation="/session-tokens",
+                    method="POST",
+                    duration_ms=(time.perf_counter() - request_started_at) * 1000,
+                    server_address=server_address,
+                )
                 raise SessionTokenError(
                     "Timed out while creating session token",
                     code=AvatarSDKErrorCode.connectionFailed,
                 ) from e
 
+            record_http_client_duration(
+                operation="/session-tokens",
+                method="POST",
+                duration_ms=(time.perf_counter() - request_started_at) * 1000,
+                status_code=response.status,
+                server_address=server_address,
+            )
             response_data = self._try_parse_json(response_text)
 
             if response.status != 200:
@@ -195,19 +252,39 @@ class AvatarSession:
         config.apply_resolved_region(region)
 
     async def start(self) -> str:
+        """Open the ingress WebSocket and complete the session handshake."""
+        span = start_span(
+            "avatar.session.start",
+            self._telemetry_trace_attributes(),
+        )
+        started_at = time.perf_counter()
+        try:
+            connection_id = await self._start_internal()
+        except BaseException as error:
+            record_metric(
+                "avatar.session.start.duration",
+                (time.perf_counter() - started_at) * 1000,
+                self._telemetry_metric_attributes(success=False),
+            )
+            finish_span(span, error=error)
+            raise
+        self._session_started_at = time.perf_counter()
+        self._session_telemetry_finished = False
+        record_metric(
+            "avatar.session.start.duration",
+            (time.perf_counter() - started_at) * 1000,
+            self._telemetry_metric_attributes(success=True),
+        )
+        finish_span(span, attributes={"connection_id": connection_id})
+        return connection_id
+
+    async def _start_internal(self) -> str:
         """
         Open the ingress WebSocket and complete the session handshake.
 
         ``start()`` sends the session configuration to the service, waits for a
         ``ServerConfirmSession`` message, and starts the background read loop that
         dispatches callbacks.
-
-        Returns:
-            Server connection ID for tracking this session.
-
-        Raises:
-            ValueError: If configuration is invalid or session not initialized.
-            AvatarSDKError: If WebSocket connection, handshake, or runtime setup fails.
         """
         if self._connection is not None:
             raise ValueError("Session already started")
@@ -456,6 +533,93 @@ class AvatarSession:
             phase="websocket_handshake",
         )
 
+    def _telemetry_egress_type(self) -> str:
+        if self._config.livekit_egress is not None:
+            return "livekit"
+        if self._config.agora_egress is not None:
+            return "agora"
+        return "websocket"
+
+    def _telemetry_metric_attributes(self, *, success: Optional[bool] = None) -> dict[str, Any]:
+        attributes: dict[str, Any] = {
+            "region": self._config.region,
+            "audio_format": self._config.audio_format.value,
+            "egress_type": self._telemetry_egress_type(),
+        }
+        if success is not None:
+            attributes["success"] = success
+        return attributes
+
+    def _telemetry_trace_attributes(self) -> dict[str, Any]:
+        attributes = self._telemetry_metric_attributes()
+        attributes.update(
+            {
+                "app_id": self._config.app_id,
+                "avatar_id": self._config.avatar_id,
+            }
+        )
+        if self._connection_id:
+            attributes["connection_id"] = self._connection_id
+        return attributes
+
+    def _start_request_telemetry(self, req_id: str) -> dict[str, str]:
+        if req_id in self._request_telemetry:
+            return {}
+        span = start_span("driven.request", {**self._telemetry_trace_attributes(), "req_id": req_id})
+        if span is None and not telemetry_enabled():
+            return {}
+        self._request_telemetry[req_id] = _RequestTelemetry(
+            span=span,
+            started_at=time.perf_counter(),
+        )
+        return inject_trace_context(span)
+
+    def _finish_request_telemetry(
+        self,
+        req_id: Optional[str],
+        *,
+        end_reason: str,
+        error: Optional[BaseException] = None,
+    ) -> None:
+        if not req_id:
+            return
+        state = self._request_telemetry.pop(req_id, None)
+        if state is None:
+            return
+
+        duration_ms = (time.perf_counter() - state.started_at) * 1000
+        attributes = self._telemetry_metric_attributes()
+        attributes["end_reason"] = end_reason
+        record_metric("avatar.request.duration", duration_ms, attributes)
+        record_metric("avatar.request.audio_bytes", state.audio_bytes, attributes)
+        if state.first_animation_at is not None:
+            record_metric(
+                "avatar.request.first_animation_latency",
+                (state.first_animation_at - state.started_at) * 1000,
+                attributes,
+            )
+        finish_span(
+            state.span,
+            attributes={
+                "req_id": req_id,
+                "audio_bytes": state.audio_bytes,
+                "animation_frame_count": state.animation_frame_count,
+                "end_reason": end_reason,
+            },
+            error=error,
+        )
+
+    def _record_animation_telemetry(self, req_id: str, *, is_last: bool) -> None:
+        state = self._request_telemetry.get(req_id)
+        if state is None:
+            return
+        state.animation_frame_count += 1
+        if state.first_animation_at is None:
+            state.first_animation_at = time.perf_counter()
+            add_span_event(state.span, "animation.first_frame")
+        if is_last:
+            self._finish_request_telemetry(req_id, end_reason="animation_end")
+
     async def send_audio(self, audio: bytes, end: bool = False) -> str:
         """
         Send one audio chunk to the avatar service.
@@ -502,24 +666,39 @@ class AvatarSession:
         if use_internal_encoder and not payload and not end:
             return req_id
 
-        # Create protobuf message
+        # Create a request span immediately before the first transmitted audio
+        # chunk, then propagate its W3C context to the backend once per req_id.
+        trace_context = self._start_request_telemetry(req_id)
+
         msg = message_pb2.Message()
         msg.type = message_pb2.MESSAGE_CLIENT_AUDIO_INPUT
         msg.client_audio_input.req_id = req_id
         msg.client_audio_input.audio = payload
         msg.client_audio_input.end = end
+        if trace_context.get("traceparent"):
+            msg.client_audio_input.trace_context.traceparent = trace_context["traceparent"]
+        if trace_context.get("tracestate"):
+            msg.client_audio_input.trace_context.tracestate = trace_context["tracestate"]
 
         # Serialize and send
         data = msg.SerializeToString()
         try:
             await self._connection.send(data)
         except Exception as e:
-            raise self._build_transport_error(
+            error = self._build_transport_error(
                 e,
                 phase="websocket_send",
                 action="send audio",
                 req_id=req_id,
-            ) from e
+            )
+            self._finish_request_telemetry(req_id, end_reason="send_error", error=error)
+            raise error from e
+
+        state = self._request_telemetry.get(req_id)
+        if state is not None:
+            state.audio_bytes += len(payload)
+            if end:
+                add_span_event(state.span, "audio.input.complete")
 
         if encoded_stream is not None:
             self._notify_encoded_audio(req_id, encoded_stream)
@@ -603,12 +782,16 @@ class AvatarSession:
         try:
             await self._connection.send(data)
         except Exception as e:
-            raise self._build_transport_error(
+            error = self._build_transport_error(
                 e,
                 phase="websocket_send",
                 action="send interrupt",
                 req_id=req_id,
-            ) from e
+            )
+            self._finish_request_telemetry(req_id, end_reason="interrupt_error", error=error)
+            raise error from e
+
+        self._finish_request_telemetry(req_id, end_reason="interrupted")
 
         # Clear current request ID so next send_audio creates a new one
         self._current_req_id = None
@@ -623,6 +806,17 @@ class AvatarSession:
         This method is idempotent. Callback exceptions are swallowed so cleanup does not
         fail because of application callback code.
         """
+        for req_id in list(self._request_telemetry):
+            self._finish_request_telemetry(req_id, end_reason="session_closed")
+
+        if self._session_started_at is not None and not self._session_telemetry_finished:
+            record_metric(
+                "avatar.session.duration",
+                (time.perf_counter() - self._session_started_at) * 1000,
+                self._telemetry_metric_attributes(success=True),
+            )
+            self._session_telemetry_finished = True
+
         if self._connection is not None:
             try:
                 await self._connection.close()
@@ -643,6 +837,10 @@ class AvatarSession:
                 except asyncio.CancelledError:
                     pass
             self._read_task = None
+
+        # The batch processors export asynchronously. Applications that exit
+        # immediately should call ``shutdown_telemetry()`` explicitly; close()
+        # must not block session cleanup on an unreachable telemetry endpoint.
 
         # Call close callback
         if self._config.on_close:
@@ -699,11 +897,12 @@ class AvatarSession:
             return
 
         if envelope.type == message_pb2.MESSAGE_SERVER_RESPONSE_ANIMATION:
+            req_id = envelope.server_response_animation.req_id
+            is_last = bool(envelope.server_response_animation.end)
+            self._record_animation_telemetry(req_id, is_last=is_last)
             if self._config.transport_frames:
                 # Make a copy of the payload
                 frame = bytes(payload)
-
-                is_last = bool(envelope.server_response_animation.end)
                 try:
                     self._config.transport_frames(frame, is_last)
                 except Exception:
@@ -713,25 +912,29 @@ class AvatarSession:
             err = envelope.server_error
             server_code = str(err.code)
             server_detail = err.message or None
-            self._notify_error(
-                AvatarSDKError(
-                    code=self._classify_error_code(
-                        phase="websocket_runtime",
-                        server_code=server_code,
-                        detail=server_detail,
-                    ),
-                    message=self._format_server_error_message(
-                        "Avatar session error",
-                        code=server_code,
-                        detail=err.message,
-                    ),
+            request_error = AvatarSDKError(
+                code=self._classify_error_code(
                     phase="websocket_runtime",
-                    connection_id=err.connection_id or None,
-                    req_id=err.req_id or None,
                     server_code=server_code,
-                    server_detail=server_detail,
-                )
+                    detail=server_detail,
+                ),
+                message=self._format_server_error_message(
+                    "Avatar session error",
+                    code=server_code,
+                    detail=err.message,
+                ),
+                phase="websocket_runtime",
+                connection_id=err.connection_id or None,
+                req_id=err.req_id or None,
+                server_code=server_code,
+                server_detail=server_detail,
             )
+            self._finish_request_telemetry(
+                err.req_id or None,
+                end_reason="server_error",
+                error=request_error,
+            )
+            self._notify_error(request_error)
 
     @staticmethod
     def _try_parse_json(body: str) -> Optional[Any]:

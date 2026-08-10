@@ -52,6 +52,27 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+## Telemetry
+
+The SDK exports OpenTelemetry metrics and traces without authentication by default:
+
+- Metrics: `https://t.spatialwalk.top/v1/metrics`
+- Traces: `https://t.spatialwalk.top/v1/traces`
+
+Configure the process-wide OTLP base endpoint before using a session, or disable export with an empty string:
+
+```python
+from spatius import configure_telemetry, shutdown_telemetry
+
+configure_telemetry("https://telemetry.example.com")
+# configure_telemetry("")  # disable metrics and traces
+
+# Useful for short-lived processes that exit immediately after a session.
+shutdown_telemetry()
+```
+
+The first audio message for each request carries W3C trace context to the backend. Later chunks omit it. The server SDK exports metrics and traces only; it does not upload telemetry logs.
+
 ## Benchmarks
 
 Benchmark the built-in PCM to Ogg Opus encoder from a source checkout:
