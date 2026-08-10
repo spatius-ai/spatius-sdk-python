@@ -71,7 +71,7 @@ configure_telemetry("https://telemetry.example.com")
 shutdown_telemetry()
 ```
 
-The first audio message for each request carries W3C trace context to the backend. Later chunks omit it. The server SDK exports metrics and traces only; it does not upload telemetry logs.
+The first audio message for each request carries W3C trace context to the backend. Later chunks omit it. OTel resources include `service.name=spatius-python`, `sdk.platform=python`, `app_id`, and the resolved `region`. The server SDK exports metrics and traces only; it does not upload telemetry logs.
 
 ## Benchmarks
 

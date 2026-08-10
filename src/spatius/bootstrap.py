@@ -25,7 +25,7 @@ from typing import Any, Optional
 import aiohttp
 
 from .session_config import DEFAULT_REGION, DEFAULT_REGION_REQUEST
-from .telemetry import record_http_client_duration
+from .telemetry import record_http_client_duration, set_resource_context
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,19 @@ def _sdk_version() -> str:
         return version("spatius")
     except PackageNotFoundError:  # pragma: no cover - only when not installed
         return "0+unknown"
+
+
+def _telemetry_region(body: Any, requested_region: str) -> str:
+    if isinstance(body, dict):
+        region = body.get("region")
+        current = region.get("current") if isinstance(region, dict) else None
+        if isinstance(current, str) and current:
+            return current
+    return (
+        requested_region
+        if requested_region != DEFAULT_REGION_REQUEST
+        else DEFAULT_REGION
+    )
 
 
 async def fetch_bootstrap(
@@ -97,6 +110,10 @@ async def fetch_bootstrap(
                     raise BootstrapError(f"bootstrap HTTP {response.status}")
                 body = await response.json()
     except BootstrapError:
+        set_resource_context(
+            app_id=app_id,
+            region=DEFAULT_REGION if region == DEFAULT_REGION_REQUEST else region,
+        )
         record_http_client_duration(
             operation="/bootstrap",
             method="POST",
@@ -106,6 +123,10 @@ async def fetch_bootstrap(
         )
         raise
     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        set_resource_context(
+            app_id=app_id,
+            region=DEFAULT_REGION if region == DEFAULT_REGION_REQUEST else region,
+        )
         record_http_client_duration(
             operation="/bootstrap",
             method="POST",
@@ -114,6 +135,10 @@ async def fetch_bootstrap(
         )
         raise BootstrapError(f"bootstrap request failed: {e}") from e
 
+    set_resource_context(
+        app_id=app_id,
+        region=_telemetry_region(body, region),
+    )
     record_http_client_duration(
         operation="/bootstrap",
         method="POST",

@@ -30,6 +30,7 @@ from .telemetry import (
     inject_trace_context,
     record_http_client_duration,
     record_metric,
+    set_resource_context,
     start_span,
     telemetry_enabled,
 )
@@ -94,6 +95,11 @@ class AvatarSession:
 
     async def init(self) -> None:
         """Resolve the region and exchange credentials for a session token."""
+        await self._ensure_region_resolved()
+        set_resource_context(
+            app_id=self._config.app_id,
+            region=self._config.region,
+        )
         span = start_span(
             "avatar.session.init",
             self._telemetry_trace_attributes(),
@@ -118,8 +124,6 @@ class AvatarSession:
         Resolve the ingress region (when set to ``auto``) and exchange
         configuration credentials for a session token from the console API.
         """
-        await self._ensure_region_resolved()
-
         if not self._config.api_key:
             raise ValueError("Missing API key")
         if not self._config.console_endpoint_url:
@@ -540,7 +544,9 @@ class AvatarSession:
             return "agora"
         return "websocket"
 
-    def _telemetry_metric_attributes(self, *, success: Optional[bool] = None) -> dict[str, Any]:
+    def _telemetry_metric_attributes(
+        self, *, success: Optional[bool] = None
+    ) -> dict[str, Any]:
         attributes: dict[str, Any] = {
             "region": self._config.region,
             "audio_format": self._config.audio_format.value,
@@ -565,7 +571,9 @@ class AvatarSession:
     def _start_request_telemetry(self, req_id: str) -> dict[str, str]:
         if req_id in self._request_telemetry:
             return {}
-        span = start_span("driven.request", {**self._telemetry_trace_attributes(), "req_id": req_id})
+        span = start_span(
+            "driven.request", {**self._telemetry_trace_attributes(), "req_id": req_id}
+        )
         if span is None and not telemetry_enabled():
             return {}
         self._request_telemetry[req_id] = _RequestTelemetry(
@@ -676,9 +684,13 @@ class AvatarSession:
         msg.client_audio_input.audio = payload
         msg.client_audio_input.end = end
         if trace_context.get("traceparent"):
-            msg.client_audio_input.trace_context.traceparent = trace_context["traceparent"]
+            msg.client_audio_input.trace_context.traceparent = trace_context[
+                "traceparent"
+            ]
         if trace_context.get("tracestate"):
-            msg.client_audio_input.trace_context.tracestate = trace_context["tracestate"]
+            msg.client_audio_input.trace_context.tracestate = trace_context[
+                "tracestate"
+            ]
 
         # Serialize and send
         data = msg.SerializeToString()
@@ -788,7 +800,9 @@ class AvatarSession:
                 action="send interrupt",
                 req_id=req_id,
             )
-            self._finish_request_telemetry(req_id, end_reason="interrupt_error", error=error)
+            self._finish_request_telemetry(
+                req_id, end_reason="interrupt_error", error=error
+            )
             raise error from e
 
         self._finish_request_telemetry(req_id, end_reason="interrupted")
@@ -809,7 +823,10 @@ class AvatarSession:
         for req_id in list(self._request_telemetry):
             self._finish_request_telemetry(req_id, end_reason="session_closed")
 
-        if self._session_started_at is not None and not self._session_telemetry_finished:
+        if (
+            self._session_started_at is not None
+            and not self._session_telemetry_finished
+        ):
             record_metric(
                 "avatar.session.duration",
                 (time.perf_counter() - self._session_started_at) * 1000,

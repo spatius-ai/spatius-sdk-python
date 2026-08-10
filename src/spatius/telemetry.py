@@ -21,8 +21,12 @@ from urllib.parse import urlparse
 from opentelemetry import trace
 from opentelemetry.context import Context
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
-from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.metrics import Histogram, MeterProvider
+from opentelemetry.sdk.metrics.export import (
+    AggregationTemporality,
+    PeriodicExportingMetricReader,
+)
+from opentelemetry.sdk.metrics.view import ExplicitBucketHistogramAggregation, View
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -42,6 +46,7 @@ _EXPORT_HEADERS = {"User-Agent": "spatius-python-sdk"}
 
 _lock = threading.RLock()
 _endpoint = DEFAULT_TELEMETRY_ENDPOINT
+_resource_context = {"app_id": "", "region": ""}
 _initialization_attempted = False
 _tracer_provider: Optional[TracerProvider] = None
 _meter_provider: Optional[MeterProvider] = None
@@ -74,6 +79,20 @@ def _normalize_endpoint(endpoint: str) -> str:
 
 def _signal_endpoint(signal: str) -> str:
     return f"{_endpoint}/v1/{signal}"
+
+
+def set_resource_context(*, app_id: str, region: str) -> None:
+    """Set process-wide resource fields before providers are initialized.
+
+    OTel resources are immutable. The first session that initializes telemetry
+    establishes these values for the process; later sessions still carry their
+    own app/region values on spans and metric attributes.
+    """
+    with _lock:
+        if _tracer_provider is not None or _meter_provider is not None:
+            return
+        _resource_context["app_id"] = app_id
+        _resource_context["region"] = region
 
 
 def configure_telemetry(endpoint: Optional[str] = None) -> None:
@@ -121,10 +140,12 @@ def _ensure_initialized() -> None:
 
         resource = Resource.create(
             {
-                "service.name": "spatius",
+                "service.name": "spatius-python",
                 "sdk.platform": "python",
                 "sdk.package": "spatius-python",
                 "sdk.version": _sdk_version(),
+                "app_id": _resource_context["app_id"],
+                "region": _resource_context["region"],
             }
         )
 
@@ -146,6 +167,9 @@ def _ensure_initialized() -> None:
                 endpoint=_signal_endpoint("metrics"),
                 headers=dict(_EXPORT_HEADERS),
                 timeout=TELEMETRY_EXPORT_TIMEOUT_MS / 1000,
+                preferred_temporality={
+                    Histogram: AggregationTemporality.DELTA,
+                },
             )
             reader = PeriodicExportingMetricReader(
                 metric_exporter,
@@ -156,9 +180,17 @@ def _ensure_initialized() -> None:
                 resource=resource,
                 metric_readers=[reader],
                 shutdown_on_exit=False,
+                views=[
+                    View(
+                        instrument_name="http.client.request.duration",
+                        aggregation=ExplicitBucketHistogramAggregation(
+                            boundaries=[100, 200, 500, 1000, 2000, 3000, 4000, 5000]
+                        ),
+                    )
+                ],
             )
             _meter_provider = provider
-            _meter = provider.get_meter("spatius", _sdk_version())
+            _meter = provider.get_meter("spatius-python", _sdk_version())
         except Exception:
             logger.warning("Failed to initialize OpenTelemetry metrics", exc_info=True)
 
@@ -302,6 +334,8 @@ def shutdown_telemetry() -> None:
         _tracer = None
         _meter = None
         _histograms.clear()
+        _resource_context["app_id"] = ""
+        _resource_context["region"] = ""
         _initialization_attempted = False
     for provider in (tracer_provider, meter_provider):
         if provider is None:
@@ -320,6 +354,7 @@ __all__ = [
     "force_flush",
     "record_http_client_duration",
     "record_metric",
+    "set_resource_context",
     "shutdown_telemetry",
     "start_span",
     "finish_span",

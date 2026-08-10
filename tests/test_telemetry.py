@@ -95,8 +95,8 @@ class TestTelemetryConfiguration(unittest.TestCase):
             captured["traces"] = (endpoint, headers, timeout)
             return span_exporter
 
-        def make_metric_exporter(*, endpoint, headers, timeout):
-            captured["metrics"] = (endpoint, headers, timeout)
+        def make_metric_exporter(*, endpoint, headers, timeout, **kwargs):
+            captured["metrics"] = (endpoint, headers, timeout, kwargs)
             return metric_exporter
 
         configure_telemetry("https://collector.example.com/otlp/")
@@ -106,9 +106,29 @@ class TestTelemetryConfiguration(unittest.TestCase):
                 telemetry, "OTLPMetricExporter", side_effect=make_metric_exporter
             ),
         ):
+            telemetry.set_resource_context(app_id="app-1", region="eu-central")
             telemetry.record_metric("test.metric", 1)
             span = telemetry.start_span("test.span")
             telemetry.finish_span(span)
+            self.assertEqual(
+                telemetry._tracer_provider.resource.attributes["service.name"],
+                "spatius-python",
+            )
+            self.assertEqual(
+                telemetry._tracer_provider.resource.attributes["sdk.platform"],
+                "python",
+            )
+            self.assertEqual(
+                telemetry._tracer_provider.resource.attributes["app_id"], "app-1"
+            )
+            self.assertEqual(
+                telemetry._tracer_provider.resource.attributes["region"],
+                "eu-central",
+            )
+            self.assertEqual(
+                telemetry._meter_provider._sdk_config.views[0]._aggregation._boundaries,
+                [100, 200, 500, 1000, 2000, 3000, 4000, 5000],
+            )
             telemetry.shutdown_telemetry()
 
         self.assertEqual(
@@ -120,6 +140,10 @@ class TestTelemetryConfiguration(unittest.TestCase):
         self.assertNotIn("Authorization", captured["metrics"][1])
         self.assertNotIn("Authorization", captured["traces"][1])
         self.assertEqual(captured["metrics"][1]["User-Agent"], "spatius-python-sdk")
+        self.assertEqual(
+            captured["metrics"][3]["preferred_temporality"][telemetry.Histogram],
+            telemetry.AggregationTemporality.DELTA,
+        )
 
     def test_exporter_failures_do_not_escape_recording(self):
         configure_telemetry("https://collector.example.com")
