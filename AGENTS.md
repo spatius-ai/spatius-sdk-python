@@ -44,7 +44,9 @@ This is a Python SDK for WebSocket-based avatar services with audio streaming an
 
 - **`logid.py`** - `generate_log_id()` utility for generating unique log IDs in format "YYYYMMDDHHMMSS_<nanoid>".
 
-- **`proto/generated/`** - Auto-generated protobuf code from `proto/message.proto`. Message types: ClientConfigureSession, ServerConfirmSession, ClientAudioInput, ServerError, ServerResponseAnimation, ClientInterrupt.
+- **`telemetry.py`** - Process-wide unauthenticated OpenTelemetry metrics and traces. Uses `https://t.spatialwalk.top` by default, derives `/v1/metrics` and `/v1/traces`, and supports `configure_telemetry("")` to disable export. No OpenTelemetry logs are emitted.
+
+- **`proto/generated/`** - Auto-generated protobuf code from `proto/message.proto`. Message types: ClientConfigureSession, ServerConfirmSession, TraceContext, ClientAudioInput, ServerError, ServerResponseAnimation, ClientInterrupt.
 
 ### Session Flow
 
@@ -53,7 +55,23 @@ This is a Python SDK for WebSocket-based avatar services with audio streaming an
 3. `session.start()` - WebSocket connection + v2 handshake, returns connection_id
 4. `session.send_audio()` - Send PCM audio via protobuf
 5. Background read loop delivers animation frames via `transport_frames` callback
-6. `session.close()` - Cleanup
+6. `session.close()` - Cleanup. Call `shutdown_telemetry()` when a short-lived process exits immediately after a session so pending metrics/traces are flushed.
+
+### Telemetry
+
+Metrics and traces are enabled by default and sent without authentication to `https://t.spatialwalk.top/v1/metrics` and `https://t.spatialwalk.top/v1/traces`. Configure the process-wide OTLP base endpoint before using a session:
+
+```python
+from spatius import configure_telemetry, shutdown_telemetry
+
+configure_telemetry("https://telemetry.example.com")
+# configure_telemetry("")  # disable metrics and traces
+
+# At process shutdown, if pending data must be flushed:
+shutdown_telemetry()
+```
+
+The first audio message for each request carries W3C `traceparent` context through the shared protobuf `TraceContext` field. Later chunks omit it. The SDK exports metrics and traces only; it does not upload telemetry logs.
 
 ### Audio Format
 

@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Optional
 
 import aiohttp
 
 from .session_config import DEFAULT_REGION, DEFAULT_REGION_REQUEST
+from .telemetry import record_http_client_duration, set_resource_context
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +53,19 @@ def _sdk_version() -> str:
         return version("spatius")
     except PackageNotFoundError:  # pragma: no cover - only when not installed
         return "0+unknown"
+
+
+def _telemetry_region(body: Any, requested_region: str) -> str:
+    if isinstance(body, dict):
+        region = body.get("region")
+        current = region.get("current") if isinstance(region, dict) else None
+        if isinstance(current, str) and current:
+            return current
+    return (
+        requested_region
+        if requested_region != DEFAULT_REGION_REQUEST
+        else DEFAULT_REGION
+    )
 
 
 async def fetch_bootstrap(
@@ -85,17 +100,52 @@ async def fetch_bootstrap(
         "platform": platform,
     }
     client_timeout = aiohttp.ClientTimeout(total=timeout)
+    started_at = time.perf_counter()
+    status_code: Optional[int] = None
     try:
         async with aiohttp.ClientSession(timeout=client_timeout) as session:
             async with session.post(BOOTSTRAP_URL, json=payload) as response:
+                status_code = response.status
                 if response.status != 200:
                     raise BootstrapError(f"bootstrap HTTP {response.status}")
                 body = await response.json()
     except BootstrapError:
+        set_resource_context(
+            app_id=app_id,
+            region=DEFAULT_REGION if region == DEFAULT_REGION_REQUEST else region,
+        )
+        record_http_client_duration(
+            operation="/bootstrap",
+            method="POST",
+            duration_ms=(time.perf_counter() - started_at) * 1000,
+            status_code=status_code,
+            server_address="global.spatialwalk.top",
+        )
         raise
     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        set_resource_context(
+            app_id=app_id,
+            region=DEFAULT_REGION if region == DEFAULT_REGION_REQUEST else region,
+        )
+        record_http_client_duration(
+            operation="/bootstrap",
+            method="POST",
+            duration_ms=(time.perf_counter() - started_at) * 1000,
+            server_address="global.spatialwalk.top",
+        )
         raise BootstrapError(f"bootstrap request failed: {e}") from e
 
+    set_resource_context(
+        app_id=app_id,
+        region=_telemetry_region(body, region),
+    )
+    record_http_client_duration(
+        operation="/bootstrap",
+        method="POST",
+        duration_ms=(time.perf_counter() - started_at) * 1000,
+        status_code=status_code,
+        server_address="global.spatialwalk.top",
+    )
     if not isinstance(body, dict):
         raise BootstrapError("bootstrap response is not a JSON object")
     return body
