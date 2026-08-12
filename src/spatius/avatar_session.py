@@ -414,6 +414,8 @@ class AvatarSession:
         msg.client_configure_session.transport_compression = (
             message_pb2.TRANSPORT_COMPRESSION_NONE
         )
+        if self._config.extra_params:
+            msg.client_configure_session.extra_params.update(self._config.extra_params)
 
         # Add LiveKit egress configuration if provided
         if self._config.livekit_egress is not None:

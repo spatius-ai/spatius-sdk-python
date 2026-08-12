@@ -76,6 +76,7 @@ message ClientConfigureSession {
   LiveKitEgressConfig livekit_egress = 6;
   // Agora egress configuration (required when egress_type is EGRESS_TYPE_AGORA)
   AgoraEgressConfig agora_egress = 7;
+  map<string, string> extra_params = 8;
 }
 
 message ServerConfirmSession {

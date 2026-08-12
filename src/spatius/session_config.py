@@ -173,6 +173,8 @@ class SessionConfig:
             streamed to a LiveKit room via the egress service.
         agora_egress: If set, enables Agora egress mode - audio and animation are
             streamed to an Agora channel via the egress service.
+        extra_params: Optional extension parameters sent during the WebSocket session
+            handshake.
     """
 
     avatar_id: str = ""
@@ -195,6 +197,7 @@ class SessionConfig:
     ingress_endpoint_url: str = ""
     livekit_egress: Optional[LiveKitEgressConfig] = None
     agora_egress: Optional[AgoraEgressConfig] = None
+    extra_params: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.audio_format = AudioFormat(self.audio_format)
@@ -252,6 +255,7 @@ def new_avatar_session(
     ingress_endpoint_url: str = "",
     livekit_egress: Optional[LiveKitEgressConfig] = None,
     agora_egress: Optional[AgoraEgressConfig] = None,
+    extra_params: Optional[dict[str, str]] = None,
 ) -> "AvatarSession":
     """
     Args:
@@ -280,6 +284,8 @@ def new_avatar_session(
             ``region``.
         livekit_egress: Optional configuration to enable streaming to LiveKit.
         agora_egress: Optional configuration to enable streaming to Agora .
+        extra_params: Optional extension parameters sent during the WebSocket session
+            handshake. Keys and values must be strings.
 
     Returns:
         A configured, uninitialized ``AvatarSession``. Call ``init()`` then ``start()``
@@ -306,5 +312,6 @@ def new_avatar_session(
         ingress_endpoint_url=ingress_endpoint_url,
         livekit_egress=livekit_egress,
         agora_egress=agora_egress,
+        extra_params=dict(extra_params or {}),
     )
     return AvatarSession(config)

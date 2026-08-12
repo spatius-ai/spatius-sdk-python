@@ -310,6 +310,45 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
 
         await session.close()
 
+    async def test_start_sends_extra_params(self):
+        async def fake_connect(url, additional_headers=None, **_kwargs):
+            return _FakeWebSocket(recv_messages=[_mk_confirm("server-conn")])
+
+        def fake_create_task(coro):
+            coro.close()
+            return _DummyTask()
+
+        extra_params = {
+            "server_post_process": "false",
+            "future_option": "enabled",
+        }
+        session = new_avatar_session(
+            ingress_endpoint_url="https://ingress.example.com",
+            console_endpoint_url="https://console.example.com",
+            api_key="api",
+            avatar_id="avatar-1",
+            app_id="app-1",
+            extra_params=extra_params,
+        )
+        session._session_token = "tok-1"
+
+        with (
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
+        ):
+            await session.start()
+
+        fake_ws: _FakeWebSocket = session._connection  # type: ignore[assignment]
+        first = message_pb2.Message()
+        first.ParseFromString(fake_ws.sent[0])
+
+        self.assertEqual(
+            first.client_configure_session.extra_params,
+            extra_params,
+        )
+
+        await session.close()
+
     async def test_start_with_livekit_egress_sends_new_fields(self):
         async def fake_connect(url, additional_headers=None, **_kwargs):
             return _FakeWebSocket(recv_messages=[_mk_confirm("server-conn")])
