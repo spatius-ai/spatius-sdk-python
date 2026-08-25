@@ -191,7 +191,7 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
 
         with patch(
             "spatius.avatar_session.aiohttp.ClientSession",
-            new=lambda: _FakeClientSession(_FakeHTTPResponse(400, body)),
+            new=lambda *a, **k: _FakeClientSession(_FakeHTTPResponse(400, body)),
         ):
             with self.assertRaises(SessionTokenError) as cm:
                 await session.init()
@@ -215,7 +215,7 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
 
         with patch(
             "spatius.avatar_session.aiohttp.ClientSession",
-            new=lambda: _FakeClientSession(
+            new=lambda *a, **k: _FakeClientSession(
                 error=aiohttp.ClientConnectionError("network down")
             ),
         ):
@@ -272,6 +272,71 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         first.ParseFromString(fake_ws.sent[0])
         self.assertEqual(first.type, message_pb2.MESSAGE_CLIENT_CONFIGURE_SESSION)
         self.assertEqual(first.client_configure_session.sample_rate, 16000)
+
+        await session.close()
+
+    async def test_start_wss_shares_process_ssl_context(self):
+        import ssl as ssl_module
+
+        from spatius.net import get_ssl_context
+
+        captured: dict = {}
+
+        async def fake_connect(url, additional_headers=None, **kwargs):
+            captured.update(kwargs)
+            return _FakeWebSocket(recv_messages=[_mk_confirm("server-conn")])
+
+        def fake_create_task(coro):
+            coro.close()
+            return _DummyTask()
+
+        session = new_avatar_session(
+            ingress_endpoint_url="https://ingress.example.com",
+            console_endpoint_url="https://console.example.com",
+            api_key="api",
+            avatar_id="avatar-1",
+            app_id="app-1",
+        )
+        session._session_token = "tok-1"
+
+        with (
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
+        ):
+            await session.start()
+
+        self.assertIsInstance(captured.get("ssl"), ssl_module.SSLContext)
+        self.assertIs(captured["ssl"], get_ssl_context())
+
+        await session.close()
+
+    async def test_start_ws_omits_ssl_context(self):
+        captured: dict = {}
+
+        async def fake_connect(url, additional_headers=None, **kwargs):
+            captured.update(kwargs)
+            return _FakeWebSocket(recv_messages=[_mk_confirm("server-conn")])
+
+        def fake_create_task(coro):
+            coro.close()
+            return _DummyTask()
+
+        session = new_avatar_session(
+            ingress_endpoint_url="http://ingress.example.com",
+            console_endpoint_url="https://console.example.com",
+            api_key="api",
+            avatar_id="avatar-1",
+            app_id="app-1",
+        )
+        session._session_token = "tok-1"
+
+        with (
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
+        ):
+            await session.start()
+
+        self.assertNotIn("ssl", captured)
 
         await session.close()
 

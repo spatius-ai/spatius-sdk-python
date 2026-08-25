@@ -38,7 +38,13 @@ This is a Python SDK for WebSocket-based avatar services with audio streaming an
 
 - **`session_config.py`** - `SessionConfig` dataclass, `LiveKitEgressConfig` dataclass, `AgoraEgressConfig` dataclass, and typed `new_avatar_session()` factory for session configuration.
 
-- **`bootstrap.py`** - Global bootstrap API client. `resolve_region()` resolves `region="auto"` into a concrete ingress region via `POST https://global.spatialwalk.top/bootstrap` (request: app_id, sdk_version, region, platform; 5s timeout). Falls back to a process-level cached region or `DEFAULT_REGION` ("us-west") on failure and never raises.
+- **`bootstrap.py`** - Global bootstrap API client. `resolve_region()` resolves `region="auto"` into a concrete ingress region via `POST https://global.spatialwalk.top/bootstrap` (request: app_id, sdk_version, region, platform; 5s timeout). Successful resolutions are reused process-wide for `REGION_CACHE_TTL_S` (5 minutes); on failure it falls back to the last cached region (even stale) or `DEFAULT_REGION` ("us-west") and never raises.
+
+- **`net.py`** - Shared networking primitives: a process-wide TLS context (`get_ssl_context()`) used by both aiohttp and websockets so TLS session tickets are reused, connector factory with DNS caching, and `warm_tls_connection()` for best-effort warm-up connects.
+
+- **`prewarm.py`** - Public `prewarm()` API: resolves and caches the `auto` region, warms TLS to the console/ingress hosts, and optionally prefetches a session token (opt-in via `prefetch_session_token=True`). Best-effort; never raises. Designed for worker prewarm hooks (e.g. LiveKit Agents `prewarm_fnc`).
+
+- **`token_cache.py`** - Process-level cache for prefetched session tokens, consumed by `AvatarSession.init()` when credentials and endpoint match and the token is not near expiry.
 
 - **`errors.py`** - `AvatarSDKError` exception with stable error codes (`AvatarSDKErrorCode` enum). Error codes: `sessionTokenExpired`, `sessionTokenInvalid`, `appIDUnrecognized`, `unknown`.
 

@@ -1,3 +1,4 @@
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -124,18 +125,18 @@ class TestFetchBootstrap(unittest.IsolatedAsyncioTestCase):
 class TestResolveRegion(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         bootstrap._cached_region = None
+        bootstrap._cached_at = 0.0
 
     def tearDown(self):
         bootstrap._cached_region = None
+        bootstrap._cached_at = 0.0
 
     async def test_concrete_region_used_directly_without_bootstrap(self):
         async def fail_fetch(**_kwargs):
             raise AssertionError("bootstrap must not be called")
 
         with patch("spatius.bootstrap.fetch_bootstrap", new=fail_fetch):
-            region = await resolve_region(
-                app_id="app-1", requested_region="eu-central"
-            )
+            region = await resolve_region(app_id="app-1", requested_region="eu-central")
         self.assertEqual(region, "eu-central")
 
     async def test_auto_resolves_region_current_and_caches(self):
@@ -161,9 +162,7 @@ class TestResolveRegion(unittest.IsolatedAsyncioTestCase):
 
         with patch("spatius.bootstrap.fetch_bootstrap", new=fail_fetch):
             with self.assertLogs("spatius.bootstrap", level="WARNING"):
-                region = await resolve_region(
-                    app_id="app-1", requested_region="auto"
-                )
+                region = await resolve_region(app_id="app-1", requested_region="auto")
         self.assertEqual(region, "us-west")
 
     async def test_failure_falls_back_to_cached_region(self):
@@ -184,13 +183,65 @@ class TestResolveRegion(unittest.IsolatedAsyncioTestCase):
             region = await resolve_region(app_id="app-1", requested_region="auto")
         self.assertEqual(region, "us-west")
 
+    async def test_fresh_cached_region_skips_bootstrap(self):
+        async def fake_fetch(**_kwargs):
+            return _region_body("ap-southeast")
+
+        with patch("spatius.bootstrap.fetch_bootstrap", new=fake_fetch):
+            first = await resolve_region(app_id="app-1", requested_region="auto")
+        self.assertEqual(first, "ap-southeast")
+
+        async def fail_fetch(**_kwargs):
+            raise AssertionError("bootstrap must not be called within the TTL")
+
+        with patch("spatius.bootstrap.fetch_bootstrap", new=fail_fetch):
+            second = await resolve_region(app_id="app-1", requested_region="auto")
+        self.assertEqual(second, "ap-southeast")
+
+    async def test_expired_cache_triggers_refetch(self):
+        bootstrap._cached_region = "ap-southeast"
+        bootstrap._cached_at = time.monotonic() - bootstrap.REGION_CACHE_TTL_S - 1
+
+        async def fake_fetch(**_kwargs):
+            return _region_body("eu-central")
+
+        with patch("spatius.bootstrap.fetch_bootstrap", new=fake_fetch):
+            region = await resolve_region(app_id="app-1", requested_region="auto")
+        self.assertEqual(region, "eu-central")
+
+    async def test_zero_cache_ttl_disables_positive_caching(self):
+        calls = 0
+
+        async def fake_fetch(**_kwargs):
+            nonlocal calls
+            calls += 1
+            return _region_body("ap-southeast")
+
+        with patch("spatius.bootstrap.fetch_bootstrap", new=fake_fetch):
+            await resolve_region(app_id="app-1", requested_region="auto", cache_ttl=0)
+            await resolve_region(app_id="app-1", requested_region="auto", cache_ttl=0)
+        self.assertEqual(calls, 2)
+
+    async def test_stale_cache_still_used_as_failure_fallback(self):
+        bootstrap._cached_region = "ap-southeast"
+        bootstrap._cached_at = time.monotonic() - bootstrap.REGION_CACHE_TTL_S - 1
+
+        async def fail_fetch(**_kwargs):
+            raise BootstrapError("network down")
+
+        with patch("spatius.bootstrap.fetch_bootstrap", new=fail_fetch):
+            region = await resolve_region(app_id="app-1", requested_region="auto")
+        self.assertEqual(region, "ap-southeast")
+
 
 class TestInitRegionResolution(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         bootstrap._cached_region = None
+        bootstrap._cached_at = 0.0
 
     def tearDown(self):
         bootstrap._cached_region = None
+        bootstrap._cached_at = 0.0
 
     def _mk_session(self, **kwargs):
         kwargs.setdefault("api_key", "api")
@@ -217,7 +268,7 @@ class TestInitRegionResolution(unittest.IsolatedAsyncioTestCase):
         with patch("spatius.bootstrap.fetch_bootstrap", new=fake_fetch):
             with patch(
                 "spatius.avatar_session.aiohttp.ClientSession",
-                new=lambda: self._token_ok_session(),
+                new=lambda *a, **k: self._token_ok_session(),
             ):
                 await session.init()
 
@@ -240,7 +291,7 @@ class TestInitRegionResolution(unittest.IsolatedAsyncioTestCase):
         with patch("spatius.bootstrap.fetch_bootstrap", new=fail_fetch):
             with patch(
                 "spatius.avatar_session.aiohttp.ClientSession",
-                new=lambda: self._token_ok_session(),
+                new=lambda *a, **k: self._token_ok_session(),
             ):
                 await session.init()
 
@@ -263,7 +314,7 @@ class TestInitRegionResolution(unittest.IsolatedAsyncioTestCase):
         with patch("spatius.bootstrap.fetch_bootstrap", new=fail_fetch):
             with patch(
                 "spatius.avatar_session.aiohttp.ClientSession",
-                new=lambda: self._token_ok_session(),
+                new=lambda *a, **k: self._token_ok_session(),
             ):
                 await session.init()
 
@@ -285,7 +336,7 @@ class TestInitRegionResolution(unittest.IsolatedAsyncioTestCase):
         with patch("spatius.bootstrap.fetch_bootstrap", new=fail_fetch):
             with patch(
                 "spatius.avatar_session.aiohttp.ClientSession",
-                new=lambda: self._token_ok_session(),
+                new=lambda *a, **k: self._token_ok_session(),
             ):
                 await session.init()
 
@@ -309,7 +360,7 @@ class TestInitRegionResolution(unittest.IsolatedAsyncioTestCase):
         with patch("spatius.bootstrap.fetch_bootstrap", new=fail_fetch):
             with patch(
                 "spatius.avatar_session.aiohttp.ClientSession",
-                new=lambda: self._token_ok_session(),
+                new=lambda *a, **k: self._token_ok_session(),
             ):
                 await session.init()
 

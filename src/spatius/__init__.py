@@ -13,6 +13,7 @@ from .session_config import (
     new_avatar_session,
 )
 from .logid import generate_log_id
+from .prewarm import PrewarmResult, prewarm
 from .telemetry import (
     DEFAULT_TELEMETRY_ENDPOINT,
     configure_telemetry,
@@ -36,6 +37,8 @@ __all__ = [
     "LiveKitEgressConfig",
     "AgoraEgressConfig",
     "generate_log_id",
+    "prewarm",
+    "PrewarmResult",
     "DEFAULT_TELEMETRY_ENDPOINT",
     "configure_telemetry",
     "shutdown_telemetry",
