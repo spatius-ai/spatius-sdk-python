@@ -8,10 +8,12 @@ Region resolution semantics (aligned with the web SDK):
 
 - A concrete requested region is used as-is; bootstrap is not called.
 - ``auto`` calls bootstrap once and uses ``region.current`` from the response.
+  Successful resolutions are cached for ``REGION_CACHE_TTL_S`` so repeated
+  sessions (or a warm-up call ahead of dispatch) skip the HTTP round trip.
 - On failure (network error, timeout, non-200, or a malformed response) it
-  falls back to the last successfully resolved region cached in this process,
-  or to ``DEFAULT_REGION`` when nothing is cached. It never raises, so session
-  initialization is never blocked by region scheduling.
+  falls back to the last successfully resolved region cached in this process
+  (even if stale), or to ``DEFAULT_REGION`` when nothing is cached. It never
+  raises, so session initialization is never blocked by region scheduling.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from typing import Any, Optional
 
 import aiohttp
 
+from .net import new_connector
 from .session_config import DEFAULT_REGION, DEFAULT_REGION_REQUEST
 from .telemetry import record_http_client_duration, set_resource_context
 
@@ -35,13 +38,19 @@ BOOTSTRAP_URL = "https://global.spatialwalk.top/bootstrap"
 # Timeout for a single bootstrap request, in seconds.
 RESOLVE_TIMEOUT_S = 5.0
 
+# How long a successfully resolved region is reused before bootstrap is called
+# again. Bounded so regional failovers are picked up by long-lived processes.
+REGION_CACHE_TTL_S = 300.0
+
 # Platform reported in the bootstrap request body.
 PLATFORM = "python"
 
 # Last region successfully resolved for "auto", reused as the fallback when a
 # later resolution fails. Process-level equivalent of the web SDK's
-# localStorage cache.
+# localStorage cache. `_cached_at == 0.0` means the cached value is stale and
+# only usable as a failure fallback.
 _cached_region: Optional[str] = None
+_cached_at: float = 0.0
 
 
 class BootstrapError(Exception):
@@ -103,7 +112,9 @@ async def fetch_bootstrap(
     started_at = time.perf_counter()
     status_code: Optional[int] = None
     try:
-        async with aiohttp.ClientSession(timeout=client_timeout) as session:
+        async with aiohttp.ClientSession(
+            timeout=client_timeout, connector=new_connector()
+        ) as session:
             async with session.post(BOOTSTRAP_URL, json=payload) as response:
                 status_code = response.status
                 if response.status != 200:
@@ -156,6 +167,7 @@ async def resolve_region(
     app_id: str,
     requested_region: str,
     sdk_version: Optional[str] = None,
+    cache_ttl: float = REGION_CACHE_TTL_S,
 ) -> str:
     """
     Resolve the requested region into a concrete ingress region.
@@ -164,17 +176,24 @@ async def resolve_region(
         app_id: Application identifier.
         requested_region: User-provided region (``auto`` or a concrete value).
         sdk_version: SDK version reported to the backend.
+        cache_ttl: How long a successfully resolved ``auto`` region is reused
+            before bootstrap is called again. ``0`` disables positive caching.
 
     Returns:
         A concrete region (never ``auto``). Resolution failures fall back to
-        the cached region or ``DEFAULT_REGION`` and never raise.
+        the cached region (even when stale) or ``DEFAULT_REGION`` and never
+        raise.
     """
-    global _cached_region
+    global _cached_region, _cached_at
 
     requested = requested_region.strip()
     if requested and requested != DEFAULT_REGION_REQUEST:
         # User pinned a concrete region - use it directly, no scheduling.
         return requested
+
+    if _cached_region is not None and time.monotonic() - _cached_at < cache_ttl:
+        logger.debug("[RegionResolver] auto -> %s (cached)", _cached_region)
+        return _cached_region
 
     try:
         body = await fetch_bootstrap(
@@ -186,6 +205,7 @@ async def resolve_region(
         current = region.get("current") if isinstance(region, dict) else None
         if isinstance(current, str) and current:
             _cached_region = current
+            _cached_at = time.monotonic()
             logger.info("[RegionResolver] auto -> %s", current)
             return current
         raise BootstrapError("bootstrap response missing region.current")

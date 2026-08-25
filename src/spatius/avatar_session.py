@@ -16,6 +16,7 @@ from .audio_encoder import OggOpusStreamEncoder
 from .bootstrap import resolve_region
 from .errors import AvatarSDKError, AvatarSDKErrorCode, SessionTokenError
 from .logid import generate_log_id
+from .net import SESSION_TOKEN_TIMEOUT_S, get_ssl_context, new_connector
 from .proto.generated import message_pb2
 from .session_config import (
     DEFAULT_REGION,
@@ -24,6 +25,7 @@ from .session_config import (
     OggOpusEncoderConfig,
     SessionConfig,
 )
+from .token_cache import get_cached_session_token
 from .telemetry import (
     add_span_event,
     finish_span,
@@ -39,6 +41,145 @@ SESSION_TOKEN_PATH = "/session-tokens"
 INGRESS_WEBSOCKET_PATH = "/websocket"
 
 logger = logging.getLogger(__name__)
+
+
+async def resolve_session_endpoints(
+    config: SessionConfig, *, sdk_version: Optional[str] = None
+) -> None:
+    """
+    Resolve an ``auto`` region via the global bootstrap API and compose the
+    endpoint URLs from the result.
+
+    Resolution only runs when relying on region-composed endpoints without a
+    pinned concrete region. It is skipped entirely when:
+
+    - both endpoint URLs were configured explicitly, or
+    - a concrete region was configured (URLs were composed at construction).
+
+    When only some endpoint URLs are explicit, the missing ones are composed
+    from ``DEFAULT_REGION`` (preserving the historical default) instead of
+    calling bootstrap. Resolution failures never raise: the region falls
+    back to the last cached region or ``DEFAULT_REGION``.
+    """
+    if config.console_endpoint_url and config.ingress_endpoint_url:
+        # Fully explicit endpoints - nothing to compose.
+        return
+
+    if config._has_concrete_region():
+        # Concrete region - compose any URLs still missing (e.g. when the
+        # config was mutated after construction).
+        config.apply_resolved_region(config.region)
+        return
+
+    if config.console_endpoint_url or config.ingress_endpoint_url:
+        # Partially explicit endpoints with an auto region: compose the
+        # remaining URLs from the default region instead of scheduling.
+        config.apply_resolved_region(DEFAULT_REGION)
+        return
+
+    region = await resolve_region(
+        app_id=config.app_id,
+        requested_region=config.region or DEFAULT_REGION_REQUEST,
+        sdk_version=sdk_version,
+    )
+    config.apply_resolved_region(region)
+
+
+async def fetch_session_token(
+    config: SessionConfig, *, timeout: float = SESSION_TOKEN_TIMEOUT_S
+) -> str:
+    """
+    Exchange configuration credentials for a session token from the console API.
+
+    Used by ``AvatarSession.init()`` and by ``prewarm()`` to fetch a token
+    ahead of dispatch. Raises ``SessionTokenError`` on any failure.
+    """
+    endpoint = config.console_endpoint_url.rstrip("/") + SESSION_TOKEN_PATH
+
+    payload = {"expireAt": int(config.expire_at.timestamp())}
+
+    headers = {
+        "X-Api-Key": config.api_key,
+        "Content-Type": "application/json",
+    }
+
+    request_started_at = time.perf_counter()
+    server_address = urlparse(endpoint).hostname
+    client_timeout = aiohttp.ClientTimeout(total=timeout)
+    async with aiohttp.ClientSession(
+        timeout=client_timeout, connector=new_connector()
+    ) as session:
+        try:
+            async with session.post(
+                endpoint, json=payload, headers=headers
+            ) as response:
+                response_text = await response.text()
+        except aiohttp.ClientError as e:
+            record_http_client_duration(
+                operation=SESSION_TOKEN_PATH,
+                method="POST",
+                duration_ms=(time.perf_counter() - request_started_at) * 1000,
+                server_address=server_address,
+            )
+            raise SessionTokenError(
+                f"Failed to create session token: {e}",
+                code=AvatarSDKErrorCode.connectionFailed,
+            ) from e
+        except asyncio.TimeoutError as e:
+            record_http_client_duration(
+                operation=SESSION_TOKEN_PATH,
+                method="POST",
+                duration_ms=(time.perf_counter() - request_started_at) * 1000,
+                server_address=server_address,
+            )
+            raise SessionTokenError(
+                "Timed out while creating session token",
+                code=AvatarSDKErrorCode.connectionFailed,
+            ) from e
+
+        record_http_client_duration(
+            operation=SESSION_TOKEN_PATH,
+            method="POST",
+            duration_ms=(time.perf_counter() - request_started_at) * 1000,
+            status_code=response.status,
+            server_address=server_address,
+        )
+        response_data = AvatarSession._try_parse_json(response_text)
+
+        if response.status != 200:
+            raise AvatarSession._build_session_token_error(
+                response.status,
+                payload=response_data,
+                raw_body=response_text,
+            )
+
+        if not isinstance(response_data, dict):
+            raise SessionTokenError(
+                "Failed to decode session token response",
+                code=AvatarSDKErrorCode.protocolError,
+                raw_body=response_text,
+            )
+
+        errors = response_data.get("errors", [])
+        if errors:
+            error_status = AvatarSession._coerce_int(
+                AvatarSession._extract_error_details(response_data).get("status")
+            )
+            raise AvatarSession._build_session_token_error(
+                error_status if error_status is not None else response.status,
+                payload=response_data,
+                raw_body=response_text,
+            )
+
+        session_token = response_data.get("sessionToken")
+        if not session_token:
+            raise SessionTokenError(
+                "Empty session token in response",
+                code=AvatarSDKErrorCode.protocolError,
+                raw_body=response_text,
+            )
+
+        return session_token
 
 
 @dataclass
@@ -121,8 +262,8 @@ class AvatarSession:
 
     async def _init_internal(self) -> None:
         """
-        Resolve the ingress region (when set to ``auto``) and exchange
-        configuration credentials for a session token from the console API.
+        Exchange configuration credentials for a session token from the console
+        API, reusing a token prefetched by ``prewarm()`` when one is cached.
         """
         if not self._config.api_key:
             raise ValueError("Missing API key")
@@ -131,129 +272,22 @@ class AvatarSession:
         if not self._config.expire_at:
             raise ValueError("Missing expireAt")
 
-        endpoint = self._config.console_endpoint_url.rstrip("/") + SESSION_TOKEN_PATH
+        cached = get_cached_session_token(
+            api_key=self._config.api_key,
+            app_id=self._config.app_id,
+            console_endpoint_url=self._config.console_endpoint_url,
+        )
+        if cached is not None:
+            logger.debug("using prefetched session token")
+            self._session_token = cached
+            return
 
-        payload = {"expireAt": int(self._config.expire_at.timestamp())}
-
-        headers = {
-            "X-Api-Key": self._config.api_key,
-            "Content-Type": "application/json",
-        }
-
-        request_started_at = time.perf_counter()
-        server_address = urlparse(endpoint).hostname
-        async with aiohttp.ClientSession() as session:
-            try:
-                async with session.post(
-                    endpoint, json=payload, headers=headers
-                ) as response:
-                    response_text = await response.text()
-            except aiohttp.ClientError as e:
-                record_http_client_duration(
-                    operation="/session-tokens",
-                    method="POST",
-                    duration_ms=(time.perf_counter() - request_started_at) * 1000,
-                    server_address=server_address,
-                )
-                raise SessionTokenError(
-                    f"Failed to create session token: {e}",
-                    code=AvatarSDKErrorCode.connectionFailed,
-                ) from e
-            except asyncio.TimeoutError as e:
-                record_http_client_duration(
-                    operation="/session-tokens",
-                    method="POST",
-                    duration_ms=(time.perf_counter() - request_started_at) * 1000,
-                    server_address=server_address,
-                )
-                raise SessionTokenError(
-                    "Timed out while creating session token",
-                    code=AvatarSDKErrorCode.connectionFailed,
-                ) from e
-
-            record_http_client_duration(
-                operation="/session-tokens",
-                method="POST",
-                duration_ms=(time.perf_counter() - request_started_at) * 1000,
-                status_code=response.status,
-                server_address=server_address,
-            )
-            response_data = self._try_parse_json(response_text)
-
-            if response.status != 200:
-                raise self._build_session_token_error(
-                    response.status,
-                    payload=response_data,
-                    raw_body=response_text,
-                )
-
-            if not isinstance(response_data, dict):
-                raise SessionTokenError(
-                    "Failed to decode session token response",
-                    code=AvatarSDKErrorCode.protocolError,
-                    raw_body=response_text,
-                )
-
-            errors = response_data.get("errors", [])
-            if errors:
-                error_status = self._coerce_int(
-                    self._extract_error_details(response_data).get("status")
-                )
-                raise self._build_session_token_error(
-                    error_status if error_status is not None else response.status,
-                    payload=response_data,
-                    raw_body=response_text,
-                )
-
-            session_token = response_data.get("sessionToken")
-            if not session_token:
-                raise SessionTokenError(
-                    "Empty session token in response",
-                    code=AvatarSDKErrorCode.protocolError,
-                    raw_body=response_text,
-                )
-
-            self._session_token = session_token
+        self._session_token = await fetch_session_token(self._config)
 
     async def _ensure_region_resolved(self) -> None:
-        """
-        Resolve an ``auto`` region via the global bootstrap API and compose the
-        endpoint URLs from the result.
-
-        Resolution only runs when the user relies on region-composed endpoints
-        without pinning a concrete region. It is skipped entirely when:
-
-        - both endpoint URLs were configured explicitly, or
-        - a concrete region was configured (URLs were composed at construction).
-
-        When only some endpoint URLs are explicit, the missing ones are composed
-        from ``DEFAULT_REGION`` (preserving the historical default) instead of
-        calling bootstrap. Resolution failures never raise: the region falls
-        back to the last cached region or ``DEFAULT_REGION``.
-        """
-        config = self._config
-
-        if config.console_endpoint_url and config.ingress_endpoint_url:
-            # Fully explicit endpoints - nothing to compose.
-            return
-
-        if config._has_concrete_region():
-            # Concrete region - compose any URLs still missing (e.g. when the
-            # config was mutated after construction).
-            config.apply_resolved_region(config.region)
-            return
-
-        if config.console_endpoint_url or config.ingress_endpoint_url:
-            # Partially explicit endpoints with an auto region: compose the
-            # remaining URLs from the default region instead of scheduling.
-            config.apply_resolved_region(DEFAULT_REGION)
-            return
-
-        region = await resolve_region(
-            app_id=config.app_id,
-            requested_region=config.region or DEFAULT_REGION_REQUEST,
-        )
-        config.apply_resolved_region(region)
+        """Resolve the ``auto`` region and compose endpoint URLs (see
+        ``resolve_session_endpoints``)."""
+        await resolve_session_endpoints(self._config)
 
     async def start(self) -> str:
         """Open the ingress WebSocket and complete the session handshake."""
@@ -354,18 +388,20 @@ class AvatarSession:
             # If we pass the wrong kwarg, it may get forwarded to asyncio's
             # BaseEventLoop.create_connection(), which then raises:
             #   "... got an unexpected keyword argument 'extra_headers'"
+            connect_kwargs: dict[str, Any] = {}
             connect_sig = inspect.signature(websockets.connect)
             if "additional_headers" in connect_sig.parameters:
-                self._connection = await websockets.connect(
-                    ws_url, additional_headers=headers
-                )
+                connect_kwargs["additional_headers"] = headers
             elif "extra_headers" in connect_sig.parameters:
-                self._connection = await websockets.connect(
-                    ws_url, extra_headers=headers
-                )
+                connect_kwargs["extra_headers"] = headers
             else:
                 # Fallback: some variants accept `headers=...`
-                self._connection = await websockets.connect(ws_url, headers=headers)  # type: ignore[call-arg]
+                connect_kwargs["headers"] = headers
+            if ws_scheme == "wss":
+                # share the process-wide TLS context so session tickets from
+                # earlier connections (e.g. prewarm) are reused
+                connect_kwargs["ssl"] = get_ssl_context()
+            self._connection = await websockets.connect(ws_url, **connect_kwargs)
         except Exception as e:
             raise self._build_websocket_connect_error(e) from e
 
