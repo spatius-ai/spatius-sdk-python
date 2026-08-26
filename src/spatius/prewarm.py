@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
@@ -27,6 +28,7 @@ from .avatar_session import fetch_session_token, resolve_session_endpoints
 from .bootstrap import RESOLVE_TIMEOUT_S
 from .net import host_port_for_url, warm_tls_connection
 from .session_config import DEFAULT_REGION_REQUEST, SessionConfig
+from .telemetry import finish_span, record_metric, set_resource_context, start_span
 from .token_cache import store_session_token
 
 logger = logging.getLogger(__name__)
@@ -86,6 +88,72 @@ async def prewarm(
     Returns:
         A ``PrewarmResult`` describing what was warmed. Never raises.
     """
+    started_at = time.perf_counter()
+    span = start_span(
+        "spatius.prewarm",
+        {
+            "app_id": app_id,
+            "region": region,
+            "warm_tls": warm_tls,
+            "prefetch_session_token": prefetch_session_token,
+        },
+    )
+    try:
+        result = await _prewarm_impl(
+            app_id=app_id,
+            api_key=api_key,
+            region=region,
+            console_endpoint_url=console_endpoint_url,
+            ingress_endpoint_url=ingress_endpoint_url,
+            sdk_version=sdk_version,
+            warm_tls=warm_tls,
+            prefetch_session_token=prefetch_session_token,
+            session_expire_at=session_expire_at,
+            timeout=timeout,
+        )
+    except BaseException as error:
+        record_metric(
+            "spatius.prewarm.duration",
+            (time.perf_counter() - started_at) * 1000,
+            {"success": False},
+        )
+        finish_span(span, error=error)
+        raise
+
+    metric_attributes: dict = {
+        "success": True,
+        "tls_warmed": len(result.tls_warmed),
+        "session_token_prefetched": result.session_token_prefetched,
+    }
+    span_attributes: dict = {
+        "tls_warmed": len(result.tls_warmed),
+        "session_token_prefetched": result.session_token_prefetched,
+    }
+    if result.region is not None:
+        metric_attributes["region"] = result.region
+        span_attributes["resolved_region"] = result.region
+    record_metric(
+        "spatius.prewarm.duration",
+        (time.perf_counter() - started_at) * 1000,
+        metric_attributes,
+    )
+    finish_span(span, attributes=span_attributes)
+    return result
+
+
+async def _prewarm_impl(
+    *,
+    app_id: str,
+    api_key: Optional[str],
+    region: str,
+    console_endpoint_url: str,
+    ingress_endpoint_url: str,
+    sdk_version: Optional[str],
+    warm_tls: bool,
+    prefetch_session_token: bool,
+    session_expire_at: Optional[datetime],
+    timeout: float,
+) -> PrewarmResult:
     result = PrewarmResult()
     try:
         config = SessionConfig(
@@ -105,6 +173,9 @@ async def prewarm(
     except Exception as e:
         logger.warning("prewarm: region resolution failed: %s", e)
         return result
+
+    if result.region is not None:
+        set_resource_context(app_id=app_id, region=result.region)
 
     warmups = []
 
