@@ -184,16 +184,41 @@ async def resolve_region(
         the cached region (even when stale) or ``DEFAULT_REGION`` and never
         raise.
     """
+    region, _ = await resolve_region_with_cache_info(
+        app_id=app_id,
+        requested_region=requested_region,
+        sdk_version=sdk_version,
+        cache_ttl=cache_ttl,
+    )
+    return region
+
+
+async def resolve_region_with_cache_info(
+    *,
+    app_id: str,
+    requested_region: str,
+    sdk_version: Optional[str] = None,
+    cache_ttl: float = REGION_CACHE_TTL_S,
+) -> tuple[str, bool]:
+    """
+    Like ``resolve_region``, but also reports whether the result was served
+    from a fresh warm-cache entry (i.e. without contacting the bootstrap API).
+
+    Returns:
+        ``(region, cache_hit)`` where ``cache_hit`` is True only for a fresh
+        positive cache hit; bootstrap fetches, failure fallbacks (including
+        stale-cache fallbacks), and concrete pinned regions all report False.
+    """
     global _cached_region, _cached_at
 
     requested = requested_region.strip()
     if requested and requested != DEFAULT_REGION_REQUEST:
         # User pinned a concrete region - use it directly, no scheduling.
-        return requested
+        return requested, False
 
     if _cached_region is not None and time.monotonic() - _cached_at < cache_ttl:
         logger.debug("[RegionResolver] auto -> %s (cached)", _cached_region)
-        return _cached_region
+        return _cached_region, True
 
     try:
         body = await fetch_bootstrap(
@@ -207,7 +232,7 @@ async def resolve_region(
             _cached_region = current
             _cached_at = time.monotonic()
             logger.info("[RegionResolver] auto -> %s", current)
-            return current
+            return current, False
         raise BootstrapError("bootstrap response missing region.current")
     except Exception as e:
         fallback = _cached_region or DEFAULT_REGION
@@ -218,4 +243,4 @@ async def resolve_region(
             _cached_region is not None,
             e,
         )
-        return fallback
+        return fallback, False

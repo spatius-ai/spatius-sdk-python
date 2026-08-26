@@ -13,7 +13,7 @@ import aiohttp
 import websockets
 
 from .audio_encoder import OggOpusStreamEncoder
-from .bootstrap import resolve_region
+from .bootstrap import resolve_region_with_cache_info
 from .errors import AvatarSDKError, AvatarSDKErrorCode, SessionTokenError
 from .logid import generate_log_id
 from .net import SESSION_TOKEN_TIMEOUT_S, get_ssl_context, new_connector
@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 async def resolve_session_endpoints(
     config: SessionConfig, *, sdk_version: Optional[str] = None
-) -> None:
+) -> Optional[bool]:
     """
     Resolve an ``auto`` region via the global bootstrap API and compose the
     endpoint URLs from the result.
@@ -60,29 +60,35 @@ async def resolve_session_endpoints(
     from ``DEFAULT_REGION`` (preserving the historical default) instead of
     calling bootstrap. Resolution failures never raise: the region falls
     back to the last cached region or ``DEFAULT_REGION``.
+
+    Returns:
+        True when an ``auto`` region was served from the fresh process cache,
+        False when the bootstrap API was contacted (successfully or not), and
+        None when no region resolution was needed.
     """
     if config.console_endpoint_url and config.ingress_endpoint_url:
         # Fully explicit endpoints - nothing to compose.
-        return
+        return None
 
     if config._has_concrete_region():
         # Concrete region - compose any URLs still missing (e.g. when the
         # config was mutated after construction).
         config.apply_resolved_region(config.region)
-        return
+        return None
 
     if config.console_endpoint_url or config.ingress_endpoint_url:
         # Partially explicit endpoints with an auto region: compose the
         # remaining URLs from the default region instead of scheduling.
         config.apply_resolved_region(DEFAULT_REGION)
-        return
+        return None
 
-    region = await resolve_region(
+    region, _cache_hit = await resolve_region_with_cache_info(
         app_id=config.app_id,
         requested_region=config.region or DEFAULT_REGION_REQUEST,
         sdk_version=sdk_version,
     )
     config.apply_resolved_region(region)
+    return _cache_hit
 
 
 async def fetch_session_token(
@@ -236,7 +242,8 @@ class AvatarSession:
 
     async def init(self) -> None:
         """Resolve the region and exchange credentials for a session token."""
-        await self._ensure_region_resolved()
+        started_at = time.perf_counter()
+        region_cache_hit = await self._ensure_region_resolved()
         set_resource_context(
             app_id=self._config.app_id,
             region=self._config.region,
@@ -245,25 +252,57 @@ class AvatarSession:
             "avatar.session.init",
             self._telemetry_trace_attributes(),
         )
+        token_cache_hit: Optional[bool] = None
         try:
-            await self._init_internal()
+            token_cache_hit = await self._init_internal()
         except BaseException as error:
-            finish_span(
+            self._finish_init_telemetry(
                 span,
-                attributes={"region": self._config.region},
+                started_at,
+                region_cache_hit=region_cache_hit,
+                token_cache_hit=token_cache_hit,
                 error=error,
             )
             raise
         else:
-            finish_span(
+            self._finish_init_telemetry(
                 span,
-                attributes={"region": self._config.region},
+                started_at,
+                region_cache_hit=region_cache_hit,
+                token_cache_hit=token_cache_hit,
+                error=None,
             )
 
-    async def _init_internal(self) -> None:
+    def _finish_init_telemetry(
+        self,
+        span: Any,
+        started_at: float,
+        *,
+        region_cache_hit: Optional[bool],
+        token_cache_hit: Optional[bool],
+        error: Optional[BaseException],
+    ) -> None:
+        span_attributes: dict[str, Any] = {"region": self._config.region}
+        metric_attributes = self._telemetry_metric_attributes(success=error is None)
+        if region_cache_hit is not None:
+            span_attributes["region_cache_hit"] = region_cache_hit
+            metric_attributes["region_cache_hit"] = region_cache_hit
+        if token_cache_hit is not None:
+            span_attributes["token_cache_hit"] = token_cache_hit
+            metric_attributes["token_cache_hit"] = token_cache_hit
+        record_metric(
+            "avatar.session.init.duration",
+            (time.perf_counter() - started_at) * 1000,
+            metric_attributes,
+        )
+        finish_span(span, attributes=span_attributes, error=error)
+
+    async def _init_internal(self) -> bool:
         """
         Exchange configuration credentials for a session token from the console
         API, reusing a token prefetched by ``prewarm()`` when one is cached.
+
+        Returns True when the session token came from the warm cache.
         """
         if not self._config.api_key:
             raise ValueError("Missing API key")
@@ -280,14 +319,15 @@ class AvatarSession:
         if cached is not None:
             logger.debug("using prefetched session token")
             self._session_token = cached
-            return
+            return True
 
         self._session_token = await fetch_session_token(self._config)
+        return False
 
-    async def _ensure_region_resolved(self) -> None:
+    async def _ensure_region_resolved(self) -> Optional[bool]:
         """Resolve the ``auto`` region and compose endpoint URLs (see
-        ``resolve_session_endpoints``)."""
-        await resolve_session_endpoints(self._config)
+        ``resolve_session_endpoints``). Returns its cache-hit indicator."""
+        return await resolve_session_endpoints(self._config)
 
     async def start(self) -> str:
         """Open the ingress WebSocket and complete the session handshake."""

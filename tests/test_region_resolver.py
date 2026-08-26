@@ -8,7 +8,12 @@ import aiohttp
 
 import spatius.bootstrap as bootstrap
 from spatius import new_avatar_session
-from spatius.bootstrap import BootstrapError, fetch_bootstrap, resolve_region
+from spatius.bootstrap import (
+    BootstrapError,
+    fetch_bootstrap,
+    resolve_region,
+    resolve_region_with_cache_info,
+)
 
 
 class _FakeHTTPResponse:
@@ -232,6 +237,67 @@ class TestResolveRegion(unittest.IsolatedAsyncioTestCase):
         with patch("spatius.bootstrap.fetch_bootstrap", new=fail_fetch):
             region = await resolve_region(app_id="app-1", requested_region="auto")
         self.assertEqual(region, "ap-southeast")
+
+
+class TestResolveRegionWithCacheInfo(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        bootstrap._cached_region = None
+        bootstrap._cached_at = 0.0
+
+    def tearDown(self):
+        bootstrap._cached_region = None
+        bootstrap._cached_at = 0.0
+
+    async def test_fresh_fetch_reports_no_cache_hit(self):
+        async def fake_fetch(**_kwargs):
+            return _region_body("ap-southeast")
+
+        with patch("spatius.bootstrap.fetch_bootstrap", new=fake_fetch):
+            region, cache_hit = await resolve_region_with_cache_info(
+                app_id="app-1", requested_region="auto"
+            )
+        self.assertEqual(region, "ap-southeast")
+        self.assertFalse(cache_hit)
+
+    async def test_fresh_cache_entry_reports_cache_hit(self):
+        async def fake_fetch(**_kwargs):
+            return _region_body("ap-southeast")
+
+        with patch("spatius.bootstrap.fetch_bootstrap", new=fake_fetch):
+            await resolve_region_with_cache_info(
+                app_id="app-1", requested_region="auto"
+            )
+
+        async def fail_fetch(**_kwargs):
+            raise AssertionError("bootstrap must not be called within the TTL")
+
+        with patch("spatius.bootstrap.fetch_bootstrap", new=fail_fetch):
+            region, cache_hit = await resolve_region_with_cache_info(
+                app_id="app-1", requested_region="auto"
+            )
+        self.assertEqual(region, "ap-southeast")
+        self.assertTrue(cache_hit)
+
+    async def test_concrete_region_reports_no_cache_hit(self):
+        region, cache_hit = await resolve_region_with_cache_info(
+            app_id="app-1", requested_region="eu-central"
+        )
+        self.assertEqual(region, "eu-central")
+        self.assertFalse(cache_hit)
+
+    async def test_stale_cache_fallback_reports_no_cache_hit(self):
+        bootstrap._cached_region = "ap-southeast"
+        bootstrap._cached_at = time.monotonic() - bootstrap.REGION_CACHE_TTL_S - 1
+
+        async def fail_fetch(**_kwargs):
+            raise BootstrapError("network down")
+
+        with patch("spatius.bootstrap.fetch_bootstrap", new=fail_fetch):
+            region, cache_hit = await resolve_region_with_cache_info(
+                app_id="app-1", requested_region="auto"
+            )
+        self.assertEqual(region, "ap-southeast")
+        self.assertFalse(cache_hit)
 
 
 class TestInitRegionResolution(unittest.IsolatedAsyncioTestCase):

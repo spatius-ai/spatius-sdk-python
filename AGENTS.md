@@ -46,6 +46,10 @@ This is a Python SDK for WebSocket-based avatar services with audio streaming an
 
 - **`token_cache.py`** - Process-level cache for prefetched session tokens, consumed by `AvatarSession.init()` when credentials and endpoint match and the token is not near expiry.
 
+### Telemetry instrumentation for warm-up
+
+`AvatarSession.init()` records an `avatar.session.init.duration` histogram and finishes its `avatar.session.init` span with `region_cache_hit` / `token_cache_hit` attributes (omitted when no resolution/prefetch applied), so warm vs cold dispatches are distinguishable in metrics and traces. `prewarm()` emits a `spatius.prewarm` span and a `spatius.prewarm.duration` histogram with `success`, `region`, `tls_warmed`, and `session_token_prefetched` attributes.
+
 - **`errors.py`** - `AvatarSDKError` exception with stable error codes (`AvatarSDKErrorCode` enum). Error codes: `sessionTokenExpired`, `sessionTokenInvalid`, `appIDUnrecognized`, `unknown`.
 
 - **`logid.py`** - `generate_log_id()` utility for generating unique log IDs in format "YYYYMMDDHHMMSS_<nanoid>".
