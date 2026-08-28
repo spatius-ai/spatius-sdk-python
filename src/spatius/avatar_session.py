@@ -47,6 +47,22 @@ HANDSHAKE_TIMEOUT_S = 10.0
 logger = logging.getLogger(__name__)
 
 
+def _detect_headers_kwarg() -> str:
+    """Name of the headers kwarg accepted by the installed websockets version.
+
+    websockets renamed ``extra_headers`` to ``additional_headers`` in 14.0.
+    Passing the wrong name forwards it to asyncio's create_connection(), which
+    raises "got an unexpected keyword argument". Computed once at import time.
+    """
+    params = inspect.signature(websockets.connect).parameters
+    if "additional_headers" in params:
+        return "additional_headers"
+    return "extra_headers"
+
+
+_HEADERS_KWARG = _detect_headers_kwarg()
+
+
 async def resolve_session_endpoints(
     config: SessionConfig, *, sdk_version: Optional[str] = None
 ) -> Optional[bool]:
@@ -428,19 +444,7 @@ class AvatarSession:
         )
 
         try:
-            # websockets renamed `extra_headers` -> `additional_headers` in newer releases.
-            # If we pass the wrong kwarg, it may get forwarded to asyncio's
-            # BaseEventLoop.create_connection(), which then raises:
-            #   "... got an unexpected keyword argument 'extra_headers'"
-            connect_kwargs: dict[str, Any] = {}
-            connect_sig = inspect.signature(websockets.connect)
-            if "additional_headers" in connect_sig.parameters:
-                connect_kwargs["additional_headers"] = headers
-            elif "extra_headers" in connect_sig.parameters:
-                connect_kwargs["extra_headers"] = headers
-            else:
-                # Fallback: some variants accept `headers=...`
-                connect_kwargs["headers"] = headers
+            connect_kwargs: dict[str, Any] = {_HEADERS_KWARG: headers}
             if ws_scheme == "wss":
                 # share the process-wide TLS context so session tickets from
                 # earlier connections (e.g. prewarm) are reused
