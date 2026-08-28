@@ -761,6 +761,37 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(err.req_id, "rid")
         self.assertEqual(err.server_detail, "bad params")
 
+    async def test_start_times_out_when_server_never_responds(self):
+        async def fake_connect(url, additional_headers=None, **_kwargs):
+            # No recv messages queued: recv() blocks forever.
+            return _FakeWebSocket()
+
+        def fake_create_task(coro):
+            coro.close()
+            return _DummyTask()
+
+        session = new_avatar_session(
+            ingress_endpoint_url="https://ingress.example.com",
+            console_endpoint_url="https://console.example.com",
+            api_key="api",
+            avatar_id="avatar-1",
+            app_id="app-1",
+        )
+        session._session_token = "tok-1"
+
+        with (
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
+            patch("spatius.avatar_session.HANDSHAKE_TIMEOUT_S", new=0.05),
+        ):
+            with self.assertRaises(AvatarSDKError) as cm:
+                await session.start()
+
+        err = cm.exception
+        self.assertEqual(err.code, AvatarSDKErrorCode.connectionFailed)
+        self.assertEqual(err.phase, "websocket_handshake")
+        self.assertIn("timed out", err.message)
+
     async def test_start_parses_websocket_http_rejection_body(self):
         async def fake_connect(url, additional_headers=None, **_kwargs):
             raise InvalidStatus(

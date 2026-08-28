@@ -40,6 +40,10 @@ from .telemetry import (
 SESSION_TOKEN_PATH = "/session-tokens"
 INGRESS_WEBSOCKET_PATH = "/websocket"
 
+# Max time to wait for the server's handshake response (ServerConfirmSession or
+# ServerError) after the WebSocket is connected and the configuration is sent.
+HANDSHAKE_TIMEOUT_S = 10.0
+
 logger = logging.getLogger(__name__)
 
 
@@ -552,7 +556,18 @@ class AvatarSession:
             raise ValueError("WebSocket connection is not established")
 
         try:
-            raw = await self._connection.recv()
+            raw = await asyncio.wait_for(
+                self._connection.recv(), timeout=HANDSHAKE_TIMEOUT_S
+            )
+        except asyncio.TimeoutError as e:
+            raise AvatarSDKError(
+                code=AvatarSDKErrorCode.connectionFailed,
+                message=(
+                    "Failed during websocket handshake: timed out waiting for "
+                    f"server response after {HANDSHAKE_TIMEOUT_S}s"
+                ),
+                phase="websocket_handshake",
+            ) from e
         except Exception as e:
             raise self._build_transport_error(
                 e,
