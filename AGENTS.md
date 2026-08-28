@@ -4,7 +4,7 @@ Guidance for coding agents working in this repository.
 
 ## What this repo is
 
-Python SDK for WebSocket-based avatar sessions, published as `spatius` on PyPI. Clients stream mono 16-bit PCM audio (8000–48000 Hz) to the backend and receive animation frames back. The wire protocol is protobuf (`proto/message.proto`).
+Python SDK for WebSocket-based avatar sessions, published as `spatius` on PyPI. Clients stream audio to the backend and receive animation frames back. The wire protocol is protobuf (`proto/message.proto`).
 
 ## Layout
 
