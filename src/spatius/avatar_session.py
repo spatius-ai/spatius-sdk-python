@@ -231,6 +231,12 @@ class AvatarSession:
     5. Receive animation frames through the configured ``transport_frames`` callback.
     6. Call ``close()`` when finished.
 
+    The session is also an async context manager; ``async with`` runs ``init()``
+    and ``start()`` on entry and ``close()`` on exit::
+
+        async with new_avatar_session(...) as session:
+            await session.send_audio(pcm, end=True)
+
     ``AvatarSession`` instances are stateful and should not be reused after close.
     """
 
@@ -259,6 +265,16 @@ class AvatarSession:
     def config(self) -> SessionConfig:
         """Return the session configuration used by this instance."""
         return self._config
+
+    async def __aenter__(self) -> "AvatarSession":
+        """Enter the async context: ``init()`` then ``start()`` the session."""
+        await self.init()
+        await self.start()
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        """Exit the async context: close the session (idempotent)."""
+        await self.close()
 
     async def init(self) -> None:
         """Resolve the region and exchange credentials for a session token."""
