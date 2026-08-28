@@ -996,10 +996,10 @@ class AvatarSession:
             is_last = bool(envelope.server_response_animation.end)
             self._record_animation_telemetry(req_id, is_last=is_last)
             if self._config.transport_frames:
-                # Make a copy of the payload
-                frame = bytes(payload)
+                # payload is already immutable bytes from the read loop; the
+                # protobuf parse above does not retain a reference to it.
                 try:
-                    self._config.transport_frames(frame, is_last)
+                    self._config.transport_frames(payload, is_last)
                 except Exception:
                     pass
 
