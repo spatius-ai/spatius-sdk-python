@@ -854,6 +854,35 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(err.server_detail)
         self.assertIn("credits exhausted", cast(str, err.server_detail))
 
+    def test_new_avatar_session_defaults_expire_at(self):
+        before = datetime.now(timezone.utc)
+        session = new_avatar_session(
+            ingress_endpoint_url="https://ingress.example.com",
+            console_endpoint_url="https://console.example.com",
+            api_key="api",
+            avatar_id="avatar-1",
+            app_id="app-1",
+        )
+        expire_at = session.config.expire_at
+        self.assertIsNotNone(expire_at)
+        self.assertIsNotNone(expire_at.tzinfo)
+        self.assertGreaterEqual(expire_at, before + timedelta(minutes=59))
+        self.assertLessEqual(expire_at, datetime.now(timezone.utc) + timedelta(hours=1))
+
+    def test_new_avatar_session_treats_naive_expire_at_as_utc(self):
+        naive = datetime(2030, 1, 1, 12, 0, 0)
+        session = new_avatar_session(
+            ingress_endpoint_url="https://ingress.example.com",
+            console_endpoint_url="https://console.example.com",
+            api_key="api",
+            avatar_id="avatar-1",
+            app_id="app-1",
+            expire_at=naive,
+        )
+        expire_at = session.config.expire_at
+        self.assertEqual(expire_at.tzinfo, timezone.utc)
+        self.assertEqual(expire_at.replace(tzinfo=None), naive)
+
     async def test_runtime_server_error_callback_receives_avatar_sdk_error(self):
         got: list[Exception] = []
         session = new_avatar_session(
