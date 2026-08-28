@@ -40,7 +40,27 @@ from .telemetry import (
 SESSION_TOKEN_PATH = "/session-tokens"
 INGRESS_WEBSOCKET_PATH = "/websocket"
 
+# Max time to wait for the server's handshake response (ServerConfirmSession or
+# ServerError) after the WebSocket is connected and the configuration is sent.
+HANDSHAKE_TIMEOUT_S = 10.0
+
 logger = logging.getLogger(__name__)
+
+
+def _detect_headers_kwarg() -> str:
+    """Name of the headers kwarg accepted by the installed websockets version.
+
+    websockets renamed ``extra_headers`` to ``additional_headers`` in 14.0.
+    Passing the wrong name forwards it to asyncio's create_connection(), which
+    raises "got an unexpected keyword argument". Computed once at import time.
+    """
+    params = inspect.signature(websockets.connect).parameters
+    if "additional_headers" in params:
+        return "additional_headers"
+    return "extra_headers"
+
+
+_HEADERS_KWARG = _detect_headers_kwarg()
 
 
 async def resolve_session_endpoints(
@@ -440,19 +460,7 @@ class AvatarSession:
         )
 
         try:
-            # websockets renamed `extra_headers` -> `additional_headers` in newer releases.
-            # If we pass the wrong kwarg, it may get forwarded to asyncio's
-            # BaseEventLoop.create_connection(), which then raises:
-            #   "... got an unexpected keyword argument 'extra_headers'"
-            connect_kwargs: dict[str, Any] = {}
-            connect_sig = inspect.signature(websockets.connect)
-            if "additional_headers" in connect_sig.parameters:
-                connect_kwargs["additional_headers"] = headers
-            elif "extra_headers" in connect_sig.parameters:
-                connect_kwargs["extra_headers"] = headers
-            else:
-                # Fallback: some variants accept `headers=...`
-                connect_kwargs["headers"] = headers
+            connect_kwargs: dict[str, Any] = {_HEADERS_KWARG: headers}
             if ws_scheme == "wss":
                 # share the process-wide TLS context so session tickets from
                 # earlier connections (e.g. prewarm) are reused
@@ -568,7 +576,18 @@ class AvatarSession:
             raise ValueError("WebSocket connection is not established")
 
         try:
-            raw = await self._connection.recv()
+            raw = await asyncio.wait_for(
+                self._connection.recv(), timeout=HANDSHAKE_TIMEOUT_S
+            )
+        except asyncio.TimeoutError as e:
+            raise AvatarSDKError(
+                code=AvatarSDKErrorCode.connectionFailed,
+                message=(
+                    "Failed during websocket handshake: timed out waiting for "
+                    f"server response after {HANDSHAKE_TIMEOUT_S}s"
+                ),
+                phase="websocket_handshake",
+            ) from e
         except Exception as e:
             raise self._build_transport_error(
                 e,
@@ -1012,10 +1031,10 @@ class AvatarSession:
             is_last = bool(envelope.server_response_animation.end)
             self._record_animation_telemetry(req_id, is_last=is_last)
             if self._config.transport_frames:
-                # Make a copy of the payload
-                frame = bytes(payload)
+                # payload is already immutable bytes from the read loop; the
+                # protobuf parse above does not retain a reference to it.
                 try:
-                    self._config.transport_frames(frame, is_last)
+                    self._config.transport_frames(payload, is_last)
                 except Exception:
                     pass
 

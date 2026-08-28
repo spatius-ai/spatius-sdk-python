@@ -792,6 +792,37 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(calls, ["init", "start", "close"])
 
+    async def test_start_times_out_when_server_never_responds(self):
+        async def fake_connect(url, additional_headers=None, **_kwargs):
+            # No recv messages queued: recv() blocks forever.
+            return _FakeWebSocket()
+
+        def fake_create_task(coro):
+            coro.close()
+            return _DummyTask()
+
+        session = new_avatar_session(
+            ingress_endpoint_url="https://ingress.example.com",
+            console_endpoint_url="https://console.example.com",
+            api_key="api",
+            avatar_id="avatar-1",
+            app_id="app-1",
+        )
+        session._session_token = "tok-1"
+
+        with (
+            patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+            patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
+            patch("spatius.avatar_session.HANDSHAKE_TIMEOUT_S", new=0.05),
+        ):
+            with self.assertRaises(AvatarSDKError) as cm:
+                await session.start()
+
+        err = cm.exception
+        self.assertEqual(err.code, AvatarSDKErrorCode.connectionFailed)
+        self.assertEqual(err.phase, "websocket_handshake")
+        self.assertIn("timed out", err.message)
+
     async def test_start_parses_websocket_http_rejection_body(self):
         async def fake_connect(url, additional_headers=None, **_kwargs):
             raise InvalidStatus(
@@ -884,6 +915,35 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(err.http_status, 402)
         self.assertIsNotNone(err.server_detail)
         self.assertIn("credits exhausted", cast(str, err.server_detail))
+
+    def test_new_avatar_session_defaults_expire_at(self):
+        before = datetime.now(timezone.utc)
+        session = new_avatar_session(
+            ingress_endpoint_url="https://ingress.example.com",
+            console_endpoint_url="https://console.example.com",
+            api_key="api",
+            avatar_id="avatar-1",
+            app_id="app-1",
+        )
+        expire_at = session.config.expire_at
+        self.assertIsNotNone(expire_at)
+        self.assertIsNotNone(expire_at.tzinfo)
+        self.assertGreaterEqual(expire_at, before + timedelta(minutes=59))
+        self.assertLessEqual(expire_at, datetime.now(timezone.utc) + timedelta(hours=1))
+
+    def test_new_avatar_session_treats_naive_expire_at_as_utc(self):
+        naive = datetime(2030, 1, 1, 12, 0, 0)
+        session = new_avatar_session(
+            ingress_endpoint_url="https://ingress.example.com",
+            console_endpoint_url="https://console.example.com",
+            api_key="api",
+            avatar_id="avatar-1",
+            app_id="app-1",
+            expire_at=naive,
+        )
+        expire_at = session.config.expire_at
+        self.assertEqual(expire_at.tzinfo, timezone.utc)
+        self.assertEqual(expire_at.replace(tzinfo=None), naive)
 
     async def test_runtime_server_error_callback_receives_avatar_sdk_error(self):
         got: list[Exception] = []

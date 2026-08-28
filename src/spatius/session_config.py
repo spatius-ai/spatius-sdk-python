@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Callable, Optional, TYPE_CHECKING
 import warnings
@@ -19,6 +19,10 @@ CN_REGION_PREFIX = "cn-"
 # This is the default when the user does not pin a region; it is not a usable
 # region by itself and is resolved in ``AvatarSession.init()``.
 DEFAULT_REGION_REQUEST = "auto"
+
+# Default session-token lifetime applied by ``new_avatar_session()`` when the
+# caller does not pass ``expire_at``.
+DEFAULT_SESSION_TOKEN_TTL = timedelta(hours=1)
 
 
 class AudioFormat(str, Enum):
@@ -264,7 +268,9 @@ def new_avatar_session(
         app_id: Application identifier used during WebSocket authentication.
         use_query_auth: When true, send ``appId`` and ``sessionKey`` in the WebSocket
             URL query string. When false, send credentials as headers.
-        expire_at: UTC-aware expiration time for the session token.
+        expire_at: UTC expiration time for the session token. Defaults to
+            ``DEFAULT_SESSION_TOKEN_TTL`` from now. Naive datetimes are assumed
+            to be UTC (consistent with the token cache).
         sample_rate: Input audio sample rate in Hz.
         bitrate: Target bitrate for Ogg Opus sessions. PCM sessions normally use 0.
         audio_format: Session input format.
@@ -292,6 +298,11 @@ def new_avatar_session(
         before sending audio.
     """
     from .avatar_session import AvatarSession
+
+    if expire_at is None:
+        expire_at = datetime.now(timezone.utc) + DEFAULT_SESSION_TOKEN_TTL
+    elif expire_at.tzinfo is None:
+        expire_at = expire_at.replace(tzinfo=timezone.utc)
 
     config = SessionConfig(
         avatar_id=avatar_id,
