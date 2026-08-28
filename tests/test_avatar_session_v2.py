@@ -761,6 +761,37 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(err.req_id, "rid")
         self.assertEqual(err.server_detail, "bad params")
 
+    async def test_async_context_manager_runs_lifecycle(self):
+        session = new_avatar_session(
+            ingress_endpoint_url="https://ingress.example.com",
+            console_endpoint_url="https://console.example.com",
+            api_key="api",
+            avatar_id="avatar-1",
+            app_id="app-1",
+        )
+        calls: list[str] = []
+
+        async def fake_init():
+            calls.append("init")
+
+        async def fake_start():
+            calls.append("start")
+            return "conn-1"
+
+        async def fake_close():
+            calls.append("close")
+
+        with (
+            patch.object(session, "init", new=fake_init),
+            patch.object(session, "start", new=fake_start),
+            patch.object(session, "close", new=fake_close),
+        ):
+            async with session as entered:
+                self.assertIs(entered, session)
+                self.assertEqual(calls, ["init", "start"])
+
+        self.assertEqual(calls, ["init", "start", "close"])
+
     async def test_start_parses_websocket_http_rejection_body(self):
         async def fake_connect(url, additional_headers=None, **_kwargs):
             raise InvalidStatus(
