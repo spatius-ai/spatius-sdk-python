@@ -21,9 +21,12 @@ from .proto.generated import message_pb2
 from .session_config import (
     DEFAULT_REGION,
     DEFAULT_REGION_REQUEST,
+    AgoraTransportConfig,
     AudioFormat,
+    LiveKitTransportConfig,
     OggOpusEncoderConfig,
     SessionConfig,
+    WebSocketTransportConfig,
 )
 from .token_cache import get_cached_session_token
 from .telemetry import (
@@ -228,7 +231,7 @@ class AvatarSession:
     3. Call ``start()`` to open the ingress WebSocket and perform the protocol
        handshake.
     4. Call ``send_audio()`` one or more times.
-    5. Receive animation frames through the configured ``transport_frames`` callback.
+    5. Receive motion messages through the configured ``transport_frames`` callback.
     6. Call ``close()`` when finished.
 
     The session is also an async context manager; ``async with`` runs ``init()``
@@ -251,6 +254,7 @@ class AvatarSession:
         self._session_token: Optional[str] = None
         self._connection: Optional[Any] = None
         self._current_req_id: Optional[str] = None
+        self._current_emotion = ""
         self._last_req_id: Optional[str] = (
             None  # tracks most recent request for interrupt
         )
@@ -373,7 +377,7 @@ class AvatarSession:
         )
         started_at = time.perf_counter()
         try:
-            connection_id = await self._start_internal()
+            connection_id = await self._start_internal(inject_trace_context(span))
         except BaseException as error:
             record_metric(
                 "avatar.session.start.duration",
@@ -392,7 +396,9 @@ class AvatarSession:
         finish_span(span, attributes={"connection_id": connection_id})
         return connection_id
 
-    async def _start_internal(self) -> str:
+    async def _start_internal(
+        self, trace_context: Optional[dict[str, str]] = None
+    ) -> str:
         """
         Open the ingress WebSocket and complete the session handshake.
 
@@ -434,7 +440,7 @@ class AvatarSession:
         query_params = parse_qs(parsed.query)
         query_params["id"] = [self._config.avatar_id]
 
-        # v2 auth: mobile uses headers; web uses query params.
+        # Auth supports headers or query parameters.
         session_key = self._session_token
         headers: dict[str, str] = {}
         if self._config.use_query_auth:
@@ -469,11 +475,11 @@ class AvatarSession:
         except Exception as e:
             raise self._build_websocket_connect_error(e) from e
 
-        # v2 handshake:
+        # Session handshake:
         # 1) client sends ClientConfigureSession
         # 2) server responds with ServerConfirmSession (connection_id) OR ServerError
         try:
-            await self._send_client_configure_session()
+            await self._send_client_configure_session(trace_context)
             server_connection_id = await self._await_server_confirm_session()
         except Exception:
             if self._connection is not None:
@@ -491,76 +497,42 @@ class AvatarSession:
 
         return server_connection_id
 
-    async def _send_client_configure_session(self) -> None:
+    async def _send_client_configure_session(
+        self, trace_context: Optional[dict[str, str]] = None
+    ) -> None:
         if self._connection is None:
             raise ValueError("WebSocket connection is not established")
 
-        # Validate that only one egress mode is configured
-        if (
-            self._config.livekit_egress is not None
-            and self._config.agora_egress is not None
-        ):
-            raise ValueError(
-                "Cannot configure both livekit_egress and agora_egress at the same time"
-            )
-
         msg = message_pb2.Message()
         msg.type = message_pb2.MESSAGE_CLIENT_CONFIGURE_SESSION
-        msg.client_configure_session.sample_rate = int(self._config.sample_rate)
-        msg.client_configure_session.bitrate = int(self._config.bitrate)
-        msg.client_configure_session.audio_format = self._proto_audio_format(
-            self._config.audio_format
-        )
-        msg.client_configure_session.transport_compression = (
-            message_pb2.TRANSPORT_COMPRESSION_NONE
-        )
-        if self._config.extra_params:
-            msg.client_configure_session.extra_params.update(self._config.extra_params)
+        config = msg.client_configure_session
+        config.audio_sample_rate = int(self._config.sample_rate)
+        config.audio_format = self._proto_audio_format(self._config.audio_format)
+        config.extra_params.update(self._config.extra_params)
+        if trace_context:
+            config.trace_context.traceparent = trace_context.get("traceparent", "")
+            config.trace_context.tracestate = trace_context.get("tracestate", "")
 
-        # Add LiveKit egress configuration if provided
-        if self._config.livekit_egress is not None:
-            msg.client_configure_session.egress_type = message_pb2.EGRESS_TYPE_LIVEKIT
-            msg.client_configure_session.livekit_egress.url = (
-                self._config.livekit_egress.url
-            )
-            msg.client_configure_session.livekit_egress.api_key = (
-                self._config.livekit_egress.api_key
-            )
-            msg.client_configure_session.livekit_egress.api_secret = (
-                self._config.livekit_egress.api_secret
-            )
-            msg.client_configure_session.livekit_egress.api_token = (
-                self._config.livekit_egress.api_token
-            )
-            msg.client_configure_session.livekit_egress.room_name = (
-                self._config.livekit_egress.room_name
-            )
-            msg.client_configure_session.livekit_egress.publisher_id = (
-                self._config.livekit_egress.publisher_id
-            )
-            if self._config.livekit_egress.extra_attributes:
-                msg.client_configure_session.livekit_egress.extra_attributes.update(
-                    self._config.livekit_egress.extra_attributes
-                )
-            msg.client_configure_session.livekit_egress.idle_timeout = int(
-                self._config.livekit_egress.idle_timeout
-            )
-
-        # Add Agora egress configuration if provided
-        if self._config.agora_egress is not None:
-            msg.client_configure_session.egress_type = message_pb2.EGRESS_TYPE_AGORA
-            msg.client_configure_session.agora_egress.channel_name = (
-                self._config.agora_egress.channel_name
-            )
-            msg.client_configure_session.agora_egress.token = (
-                self._config.agora_egress.token
-            )
-            msg.client_configure_session.agora_egress.uid = (
-                self._config.agora_egress.uid
-            )
-            msg.client_configure_session.agora_egress.publisher_id = (
-                self._config.agora_egress.publisher_id
-            )
+        transport = self._config.transport
+        if isinstance(transport, WebSocketTransportConfig):
+            config.transport.websocket.SetInParent()
+        elif isinstance(transport, LiveKitTransportConfig):
+            livekit = config.transport.livekit
+            livekit.url = transport.url
+            livekit.token = transport.token
+            livekit.idle_timeout = transport.idle_timeout
+            livekit.agent_identity = transport.agent_identity
+            livekit.extra_attributes.update(transport.extra_attributes)
+        elif isinstance(transport, AgoraTransportConfig):
+            agora = config.transport.agora
+            agora.channel_name = transport.channel_name
+            agora.token = transport.token
+            if transport.uid is not None:
+                agora.uid = transport.uid
+            else:
+                agora.user_account = transport.user_account
+        elif transport is not None:
+            raise ValueError("Unsupported transport configuration")
 
         try:
             await self._connection.send(msg.SerializeToString())
@@ -651,9 +623,9 @@ class AvatarSession:
         )
 
     def _telemetry_egress_type(self) -> str:
-        if self._config.livekit_egress is not None:
+        if isinstance(self._config.transport, LiveKitTransportConfig):
             return "livekit"
-        if self._config.agora_egress is not None:
+        if isinstance(self._config.transport, AgoraTransportConfig):
             return "agora"
         return "websocket"
 
@@ -681,19 +653,18 @@ class AvatarSession:
             attributes["connection_id"] = self._connection_id
         return attributes
 
-    def _start_request_telemetry(self, req_id: str) -> dict[str, str]:
+    def _start_request_telemetry(self, req_id: str) -> None:
         if req_id in self._request_telemetry:
-            return {}
+            return
         span = start_span(
             "driven.request", {**self._telemetry_trace_attributes(), "req_id": req_id}
         )
         if span is None and not telemetry_enabled():
-            return {}
+            return
         self._request_telemetry[req_id] = _RequestTelemetry(
             span=span,
             started_at=time.perf_counter(),
         )
-        return inject_trace_context(span)
 
     def _finish_request_telemetry(
         self,
@@ -741,7 +712,9 @@ class AvatarSession:
         if is_last:
             self._finish_request_telemetry(req_id, end_reason="animation_end")
 
-    async def send_audio(self, audio: bytes, end: bool = False) -> str:
+    async def send_audio(
+        self, audio: bytes, end: bool = False, *, emotion: Optional[str] = None
+    ) -> str:
         """
         Send one audio chunk to the avatar service.
 
@@ -758,6 +731,9 @@ class AvatarSession:
             audio: Audio bytes to send. May be empty for the final chunk of a pre-encoded
                 Ogg Opus stream.
             end: Whether this is the last audio chunk for the current request.
+            emotion: Emotion label for a new request. Omit it to use the avatar
+                default. Later chunks may omit it or repeat the same label;
+                changing the label within a request is not allowed.
 
         Returns:
             Request ID for tracking this audio request.
@@ -768,10 +744,16 @@ class AvatarSession:
         if self._connection is None:
             raise ValueError("WebSocket connection is not established")
 
-        # Generate or reuse request ID
+        if emotion is not None and not isinstance(emotion, str):
+            raise ValueError("emotion must be a string")
+        if self._current_req_id and emotion and emotion != self._current_emotion:
+            raise ValueError("Cannot change emotion within an audio request")
+
+        # Generate or reuse request ID.
         if not self._current_req_id:
             self._current_req_id = generate_log_id()
             self._last_req_id = self._current_req_id
+            self._current_emotion = emotion or ""
 
         req_id = self._current_req_id
 
@@ -787,23 +769,14 @@ class AvatarSession:
         if use_internal_encoder and not payload and not end:
             return req_id
 
-        # Create a request span immediately before the first transmitted audio
-        # chunk, then propagate its W3C context to the backend once per req_id.
-        trace_context = self._start_request_telemetry(req_id)
+        self._start_request_telemetry(req_id)
 
         msg = message_pb2.Message()
         msg.type = message_pb2.MESSAGE_CLIENT_AUDIO_INPUT
         msg.client_audio_input.req_id = req_id
         msg.client_audio_input.audio = payload
         msg.client_audio_input.end = end
-        if trace_context.get("traceparent"):
-            msg.client_audio_input.trace_context.traceparent = trace_context[
-                "traceparent"
-            ]
-        if trace_context.get("tracestate"):
-            msg.client_audio_input.trace_context.tracestate = trace_context[
-                "tracestate"
-            ]
+        msg.client_audio_input.emotion = self._current_emotion
 
         # Serialize and send
         data = msg.SerializeToString()
@@ -830,6 +803,7 @@ class AvatarSession:
 
         if end:
             self._current_req_id = None
+            self._current_emotion = ""
             self._audio_encoder = None
 
         return req_id
@@ -879,9 +853,9 @@ class AvatarSession:
         """
         Send an interrupt signal for the most recent audio request.
 
-        Interrupt is intended for egress sessions where generation may continue after the
-        client has sent the final audio chunk. The SDK tracks the last request ID even
-        after ``send_audio(..., end=True)`` so it can interrupt that in-flight request.
+        Generation may continue after the client has sent the final audio chunk.
+        The SDK tracks the last request ID even after ``send_audio(..., end=True)``
+        so it can interrupt that in-flight request.
 
         Returns:
             The request ID that was interrupted.
@@ -922,6 +896,7 @@ class AvatarSession:
 
         # Clear current request ID so next send_audio creates a new one
         self._current_req_id = None
+        self._current_emotion = ""
         self._audio_encoder = None
 
         return req_id
@@ -956,6 +931,8 @@ class AvatarSession:
                 self._connection = None
 
         self._audio_encoder = None
+        self._current_req_id = None
+        self._current_emotion = ""
 
         if self._read_task is not None:
             # If we're calling close() from inside the read task itself (e.g. the
@@ -1026,9 +1003,18 @@ class AvatarSession:
             )
             return
 
-        if envelope.type == message_pb2.MESSAGE_SERVER_RESPONSE_ANIMATION:
-            req_id = envelope.server_response_animation.req_id
-            is_last = bool(envelope.server_response_animation.end)
+        if envelope.type == message_pb2.MESSAGE_SERVER_RESPONSE_MOTION:
+            if envelope.WhichOneof("data") != "server_response_motion":
+                self._notify_error(
+                    AvatarSDKError(
+                        code=AvatarSDKErrorCode.protocolError,
+                        message="Motion response is missing its payload",
+                        phase="websocket_runtime",
+                    )
+                )
+                return
+            req_id = envelope.server_response_motion.req_id
+            is_last = bool(envelope.server_response_motion.end)
             self._record_animation_telemetry(req_id, is_last=is_last)
             if self._config.transport_frames:
                 # payload is already immutable bytes from the read loop; the

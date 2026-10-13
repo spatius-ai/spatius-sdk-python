@@ -8,8 +8,9 @@ from .session_config import (
     AudioFormat,
     OggOpusEncoderConfig,
     SessionConfig,
-    LiveKitEgressConfig,
-    AgoraEgressConfig,
+    WebSocketTransportConfig,
+    LiveKitTransportConfig,
+    AgoraTransportConfig,
     new_avatar_session,
 )
 from .logid import generate_log_id
@@ -34,8 +35,9 @@ __all__ = [
     "AudioFormat",
     "OggOpusEncoderConfig",
     "SessionConfig",
-    "LiveKitEgressConfig",
-    "AgoraEgressConfig",
+    "WebSocketTransportConfig",
+    "LiveKitTransportConfig",
+    "AgoraTransportConfig",
     "generate_log_id",
     "prewarm",
     "PrewarmResult",

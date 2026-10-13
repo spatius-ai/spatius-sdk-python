@@ -35,7 +35,7 @@ def _endpoint_kwargs() -> dict[str, str]:
     }
 
 
-class _AnimationCollector:
+class _MotionCollector:
     def __init__(self):
         self.frames: list[tuple[message_pb2.Message, bool]] = []
         self.last = False
@@ -45,7 +45,7 @@ class _AnimationCollector:
     def on_frame(self, payload: bytes, is_last: bool) -> None:
         envelope = message_pb2.Message()
         envelope.ParseFromString(payload)
-        print(f"animation frame payload length: {len(payload)} bytes", flush=True)
+        print(f"motion frame payload length: {len(payload)} bytes", flush=True)
         self.frames.append((envelope, is_last))
         if is_last:
             self.last = True
@@ -56,7 +56,7 @@ class _AnimationCollector:
 
     def on_close(self) -> None:
         if not self.last and not self.error:
-            self.finish(Exception("Session closed before final animation frame"))
+            self.finish(Exception("Session closed before final motion frame"))
         else:
             self.finish(None)
 
@@ -69,7 +69,7 @@ class _AnimationCollector:
         try:
             await asyncio.wait_for(self._done.wait(), timeout=timeout)
         except asyncio.TimeoutError as exc:
-            raise TimeoutError("Timed out waiting for animation frames") from exc
+            raise TimeoutError("Timed out waiting for motion frames") from exc
 
         if self.error is not None:
             raise self.error
@@ -80,7 +80,7 @@ class _AnimationCollector:
     "Set SPATIUS_RUN_E2E=1 to run end-to-end network tests",
 )
 class TestE2ERequest(unittest.IsolatedAsyncioTestCase):
-    async def test_send_audio_receives_animation_frames(self):
+    async def test_send_audio_receives_motion_frames(self):
         env = _require_env(
             "SPATIUS_E2E_API_KEY",
             "SPATIUS_E2E_APP_ID",
@@ -127,7 +127,7 @@ class TestE2ERequest(unittest.IsolatedAsyncioTestCase):
             raise unittest.SkipTest(f"E2E audio file not found: {audio_path}")
 
         audio_bytes = audio_path.read_bytes()
-        collector = _AnimationCollector()
+        collector = _MotionCollector()
         session = new_avatar_session(
             api_key=env["SPATIUS_E2E_API_KEY"],
             app_id=env["SPATIUS_E2E_APP_ID"],
@@ -170,14 +170,20 @@ class TestE2ERequest(unittest.IsolatedAsyncioTestCase):
 
         self.assertGreater(len(collector.frames), 0)
         self.assertTrue(collector.last)
+        keyframes = [
+            frame
+            for envelope, _ in collector.frames
+            for frame in envelope.server_response_motion.animation.keyframes
+        ]
+        self.assertGreater(len(keyframes), 0)
+        self.assertTrue(all(frame.expr for frame in keyframes))
+        self.assertTrue(all(frame.emotion_weights for frame in keyframes))
 
         last_message, last_flag = collector.frames[-1]
         self.assertTrue(last_flag)
-        self.assertEqual(
-            last_message.type, message_pb2.MESSAGE_SERVER_RESPONSE_ANIMATION
-        )
-        self.assertEqual(last_message.server_response_animation.req_id, req_id)
-        self.assertTrue(last_message.server_response_animation.end)
+        self.assertEqual(last_message.type, message_pb2.MESSAGE_SERVER_RESPONSE_MOTION)
+        self.assertEqual(last_message.server_response_motion.req_id, req_id)
+        self.assertTrue(last_message.server_response_motion.end)
 
     async def _send_audio_for_format(
         self,

@@ -68,12 +68,12 @@ def _mk_confirm(connection_id: str) -> bytes:
 
 
 def _mk_animation_frame(req_id: str, end: bool = False) -> bytes:
-    """Create a ServerResponseAnimation message."""
+    """Create a ServerResponseMotion message."""
     m = message_pb2.Message()
-    m.type = message_pb2.MESSAGE_SERVER_RESPONSE_ANIMATION
-    m.server_response_animation.connection_id = "cid"
-    m.server_response_animation.req_id = req_id
-    m.server_response_animation.end = end
+    m.type = message_pb2.MESSAGE_SERVER_RESPONSE_MOTION
+    m.server_response_motion.connection_id = "cid"
+    m.server_response_motion.req_id = req_id
+    m.server_response_motion.end = end
     return m.SerializeToString()
 
 
