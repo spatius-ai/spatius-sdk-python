@@ -527,10 +527,7 @@ class AvatarSession:
             agora = config.transport.agora
             agora.channel_name = transport.channel_name
             agora.token = transport.token
-            if transport.uid is not None:
-                agora.uid = transport.uid
-            else:
-                agora.user_account = transport.user_account
+            agora.uid = transport.uid
         elif transport is not None:
             raise ValueError("Unsupported transport configuration")
 

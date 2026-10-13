@@ -110,8 +110,5 @@ message LiveKitTransportConfig {
 message AgoraTransportConfig {
   string channel_name = 1;
   string token = 2;
-  oneof identity {
-    uint32 uid = 3;
-    string user_account = 4;
-  }
+  uint32 uid = 3;
 }

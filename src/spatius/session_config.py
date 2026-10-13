@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Callable, Optional, TYPE_CHECKING
-import re
 from urllib.parse import urlsplit
 
 if TYPE_CHECKING:
@@ -115,44 +114,27 @@ class LiveKitTransportConfig:
         self.extra_attributes = dict(self.extra_attributes)
 
 
-_AGORA_ACCOUNT = re.compile(r"[a-zA-Z0-9 !#$%&()+,.:;<=>?@\[\]^_{|}~-]+", re.ASCII)
-
-
 @dataclass
 class AgoraTransportConfig:
-    """Publish audio and motion to an Agora channel.
+    """Publish audio and motion to an Agora channel using a numeric UID.
 
-    Set exactly one of ``uid`` or ``user_account``. Numeric UIDs must be from 1
-    through 4294967295. String accounts are case-sensitive, at most 255 ASCII
-    bytes, and must use Agora's supported account characters. All participants
-    in a channel must use the same identity type, with matching tokens.
+    ``uid`` must be from 0 through 4294967295. The default value of 0 asks Agora
+    to assign a UID. The token must authorize the selected channel and UID.
     """
 
     channel_name: str
     token: str = field(repr=False)
-    uid: Optional[int] = None
-    user_account: Optional[str] = None
+    uid: int = 0
 
     def __post_init__(self) -> None:
         _require_nonempty_string("channel_name", self.channel_name)
         _require_nonempty_string("token", self.token)
-        if (self.uid is None) == (self.user_account is None):
-            raise ValueError("set exactly one of uid or user_account")
-        if self.uid is not None:
-            if (
-                isinstance(self.uid, bool)
-                or not isinstance(self.uid, int)
-                or not 1 <= self.uid <= 2**32 - 1
-            ):
-                raise ValueError("uid must be an integer from 1 to 4294967295")
-        elif (
-            not isinstance(self.user_account, str)
-            or len(self.user_account) > 255
-            or _AGORA_ACCOUNT.fullmatch(self.user_account) is None
+        if (
+            isinstance(self.uid, bool)
+            or not isinstance(self.uid, int)
+            or not 0 <= self.uid <= 2**32 - 1
         ):
-            raise ValueError(
-                "user_account must contain 1 to 255 supported ASCII characters"
-            )
+            raise ValueError("uid must be an integer from 0 to 4294967295")
 
 
 TransportConfig = (

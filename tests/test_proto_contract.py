@@ -92,19 +92,23 @@ def test_motion_response_preserves_all_frame_values_and_metadata():
     }
 
 
-@pytest.mark.parametrize(
-    "identity", [{"uid": 123}, {"user_account": "123"}, {"user_account": "0"}]
-)
-def test_agora_identity_type_is_preserved_in_transport_wire_format(identity):
+@pytest.mark.parametrize("uid", [0, 123, 2**32 - 1])
+def test_agora_numeric_uid_is_preserved_in_transport_wire_format(uid):
     transport = message_pb2.TransportConfig(
         agora=message_pb2.AgoraTransportConfig(
-            channel_name="room", token="test-token", **identity
+            channel_name="room", token="test-token", uid=uid
         )
     )
     decoded = message_pb2.TransportConfig.FromString(transport.SerializeToString())
     assert decoded == transport
     assert decoded.WhichOneof("destination") == "agora"
-    assert decoded.agora.WhichOneof("identity") == next(iter(identity))
+    assert decoded.agora.uid == uid
+    assert _fields(message_pb2.AgoraTransportConfig) == {
+        "channel_name": 1,
+        "token": 2,
+        "uid": 3,
+    }
+    assert not message_pb2.AgoraTransportConfig.DESCRIPTOR.oneofs
 
 
 def test_livekit_preserves_extra_attributes_and_transport_oneof():

@@ -12,6 +12,7 @@ from websockets.frames import Close
 from websockets.http11 import Response
 
 from spatius import (
+    AgoraTransportConfig,
     AudioFormat,
     AvatarSDKError,
     AvatarSDKErrorCode,
@@ -416,6 +417,45 @@ class TestAvatarSessionV3(unittest.IsolatedAsyncioTestCase):
         )
 
         await session.close()
+
+    async def test_start_with_agora_sends_numeric_uid_including_default_zero(self):
+        async def fake_connect(url, additional_headers=None, **_kwargs):
+            return _FakeWebSocket(recv_messages=[_mk_confirm("server-conn")])
+
+        def fake_create_task(coro):
+            coro.close()
+            return _DummyTask()
+
+        for identity in ({}, {"uid": 123}, {"uid": 2**32 - 1}):
+            with self.subTest(identity=identity):
+                session = new_avatar_session(
+                    ingress_endpoint_url="https://ingress.example.com",
+                    console_endpoint_url="https://console.example.com",
+                    api_key="api",
+                    avatar_id="avatar-1",
+                    app_id="app-1",
+                    transport=AgoraTransportConfig(
+                        channel_name="room", token="rtc-token", **identity
+                    ),
+                )
+                session._session_token = "tok-1"
+                with (
+                    patch("spatius.avatar_session.websockets.connect", new=fake_connect),
+                    patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
+                ):
+                    await session.start()
+
+                fake_ws = cast(_FakeWebSocket, session._connection)
+                first = message_pb2.Message.FromString(fake_ws.sent[0])
+                self.assertEqual(
+                    first.client_configure_session.transport.WhichOneof("destination"),
+                    "agora",
+                )
+                config = first.client_configure_session.transport.agora
+                self.assertEqual(config.uid, identity.get("uid", 0))
+                self.assertEqual(config.channel_name, "room")
+                self.assertEqual(config.token, "rtc-token")
+                await session.close()
 
     async def test_start_with_livekit_transport_sends_new_fields(self):
         async def fake_connect(url, additional_headers=None, **_kwargs):

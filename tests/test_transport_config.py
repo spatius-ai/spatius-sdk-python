@@ -34,7 +34,7 @@ def test_explicit_ingress_url_is_preserved():
 
 def test_factory_passes_transport_and_keeps_encoder_bitrate_local():
     transport = AgoraTransportConfig(
-        channel_name="room", token="test-token", user_account="123"
+        channel_name="room", token="test-token", uid=123
     )
     session = new_avatar_session(
         transport=transport,
@@ -96,47 +96,22 @@ def test_livekit_rejects_invalid_configuration(overrides):
         LiveKitTransportConfig(**args)
 
 
-@pytest.mark.parametrize("uid", [1, 123, 2**32 - 1])
+@pytest.mark.parametrize("uid", [0, 1, 123, 2**32 - 1])
 def test_agora_accepts_explicit_numeric_uid(uid):
     config = AgoraTransportConfig(channel_name="room", token="secret-token", uid=uid)
     assert config.uid == uid
-    assert config.user_account is None
     assert "secret-token" not in repr(config)
 
 
-@pytest.mark.parametrize(
-    "account", ["123", "0", "CaseSensitive", "a" * 255, " !#$%&()+,-.:;<=>?@[]^_{|}~"]
-)
-def test_agora_preserves_string_accounts(account):
-    config = AgoraTransportConfig(
-        channel_name="room", token="test-token", user_account=account
-    )
-    assert config.user_account == account
-    assert config.uid is None
+def test_agora_defaults_to_automatic_uid():
+    config = AgoraTransportConfig(channel_name="room", token="test-token")
+    assert config.uid == 0
 
 
-@pytest.mark.parametrize(
-    "identity",
-    [
-        {},
-        {"uid": 123, "user_account": "123"},
-        {"uid": 0},
-        {"uid": -1},
-        {"uid": 2**32},
-        {"uid": True},
-        {"uid": 1.5},
-        {"uid": "123"},
-        {"user_account": ""},
-        {"user_account": "a" * 256},
-        {"user_account": "用户"},
-        {"user_account": "user/account"},
-        {"user_account": "user\naccount"},
-        {"user_account": 123},
-    ],
-)
-def test_agora_rejects_invalid_identity(identity):
-    with pytest.raises(ValueError):
-        AgoraTransportConfig(channel_name="room", token="test-token", **identity)
+@pytest.mark.parametrize("uid", [-1, 2**32, True, 1.5, "123", None])
+def test_agora_rejects_invalid_uid(uid):
+    with pytest.raises(ValueError, match="uid"):
+        AgoraTransportConfig(channel_name="room", token="test-token", uid=uid)
 
 
 @pytest.mark.parametrize("overrides", [{"channel_name": ""}, {"token": ""}])
