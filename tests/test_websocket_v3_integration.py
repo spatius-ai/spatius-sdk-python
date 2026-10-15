@@ -12,6 +12,7 @@ class TestLocalV3WebSocket(unittest.IsolatedAsyncioTestCase):
         received = []
         connection_headers = {}
         token_requests = []
+        detail_requests = []
         frames = []
         errors = []
         completed = asyncio.Event()
@@ -22,6 +23,21 @@ class TestLocalV3WebSocket(unittest.IsolatedAsyncioTestCase):
                 (request.headers.get("X-Api-Key"), await request.json())
             )
             return web.json_response({"sessionToken": "local-session-token"})
+
+        async def avatar_detail(request):
+            detail_requests.append(
+                (
+                    request.path,
+                    request.headers.get("X-App-ID"),
+                    request.headers.get("X-Session-Key"),
+                )
+            )
+            return web.json_response(
+                {
+                    "availableEmotions": ["neutral", "happy", "sad"],
+                    "defaultEmotion": "neutral",
+                }
+            )
 
         async def websocket(request):
             connection_headers.update(
@@ -90,6 +106,7 @@ class TestLocalV3WebSocket(unittest.IsolatedAsyncioTestCase):
         app = web.Application()
         app.router.add_post("/v1/console/session-tokens", create_token)
         app.router.add_get("/v3/driveningress/websocket", websocket)
+        app.router.add_get("/v3/avatar/{avatar_id}", avatar_detail)
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(runner, "127.0.0.1", 0)
@@ -108,6 +125,11 @@ class TestLocalV3WebSocket(unittest.IsolatedAsyncioTestCase):
         )
         try:
             await session.init()
+            self.assertEqual(detail_requests, [])
+            detail = await session.get_avatar_detail()
+            self.assertEqual(detail.available_emotions, ("neutral", "happy", "sad"))
+            self.assertEqual(detail.default_emotion, "neutral")
+            self.assertIs(await session.get_avatar_detail(), detail)
             self.assertEqual(await session.start(), "local-connection")
             req_id = await session.send_audio(
                 b"\x01\x00" * 160, emotion="happy", strength=0.5
@@ -137,6 +159,12 @@ class TestLocalV3WebSocket(unittest.IsolatedAsyncioTestCase):
                 "app": "local-app",
                 "token": "local-session-token",
             },
+        )
+        self.assertEqual(
+            detail_requests,
+            [
+                ("/v3/avatar/local-avatar", "local-app", "local-session-token"),
+            ],
         )
         self.assertEqual(token_requests[0][0], "local-api-key")
         self.assertIsInstance(token_requests[0][1]["expireAt"], int)

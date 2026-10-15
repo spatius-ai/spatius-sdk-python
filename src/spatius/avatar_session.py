@@ -15,6 +15,7 @@ import aiohttp
 import websockets
 
 from .audio_encoder import OggOpusStreamEncoder
+from .avatar_detail import AvatarDetail, fetch_avatar_detail
 from .bootstrap import resolve_region_with_cache_info
 from .errors import AvatarSDKError, AvatarSDKErrorCode, SessionTokenError
 from .logid import generate_log_id
@@ -254,6 +255,8 @@ class AvatarSession:
         """
         self._config = config
         self._session_token: Optional[str] = None
+        self._avatar_detail: Optional[AvatarDetail] = None
+        self._avatar_detail_lock = asyncio.Lock()
         self._connection: Optional[Any] = None
         self._current_req_id: Optional[str] = None
         self._current_emotion = ""
@@ -315,6 +318,31 @@ class AvatarSession:
                 token_cache_hit=token_cache_hit,
                 error=None,
             )
+
+    async def get_avatar_detail(self) -> AvatarDetail:
+        """Fetch the avatar's expression metadata after ``init()``.
+
+        The first call uses the resolved ingress endpoint and session credentials
+        in HTTP headers, regardless of the WebSocket ``use_query_auth`` option.
+        Successful metadata is cached on this session; concurrent callers share
+        the lookup. This does not open the WebSocket or download avatar assets.
+        A failed or cancelled lookup can be retried by calling this method again.
+        """
+        if not self._session_token:
+            raise ValueError("Session not initialized")
+        if not self._config.ingress_endpoint_url:
+            raise ValueError("Missing ingress endpoint URL")
+        if not self._config.avatar_id:
+            raise ValueError("Missing avatar ID")
+        if not self._config.app_id:
+            raise ValueError("Missing app ID")
+
+        async with self._avatar_detail_lock:
+            if self._avatar_detail is None:
+                self._avatar_detail = await fetch_avatar_detail(
+                    self._config, self._session_token
+                )
+            return self._avatar_detail
 
     def _finish_init_telemetry(
         self,
