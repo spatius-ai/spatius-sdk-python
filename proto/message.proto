@@ -2,16 +2,14 @@ syntax = "proto3";
 
 package message;
 
-option py_generic_services = true;
-
 enum MessageType {
   MESSAGE_UNSPECIFIED = 0;
   MESSAGE_CLIENT_CONFIGURE_SESSION = 1;
   MESSAGE_SERVER_CONFIRM_SESSION = 2;
   MESSAGE_CLIENT_AUDIO_INPUT = 3;
   MESSAGE_SERVER_ERROR = 4;
-  MESSAGE_SERVER_RESPONSE_ANIMATION = 5;
-  MESSAGE_CLIENT_INTERRUPT = 7;
+  MESSAGE_SERVER_RESPONSE_MOTION = 5;
+  MESSAGE_CLIENT_INTERRUPT = 6;
 }
 
 enum AudioFormat {
@@ -19,43 +17,26 @@ enum AudioFormat {
   AUDIO_FORMAT_OGG_OPUS = 1;
 }
 
-enum TransportCompression {
-  TRANSPORT_COMPRESSION_NONE = 0;
+message MotionFrame {
+  repeated float expr = 1 [packed = true];
+  repeated float body_pose = 2 [packed = true];
+  repeated float jaw_pose = 3 [packed = true];
+  repeated float eyelid = 4 [packed = true];
+  repeated float leye_pose = 5 [packed = true];
+  repeated float reye_pose = 6 [packed = true];
+  repeated float emotion_weights = 7 [packed = true];
 }
 
-enum EgressType {
-  EGRESS_TYPE_UNSPECIFIED = 0;
-  EGRESS_TYPE_LIVEKIT = 1;
-  EGRESS_TYPE_AGORA = 2;
-}
-
-message LiveKitEgressConfig {
-  string url = 1;
-  string api_key = 2;
-  string api_secret = 3;
-  string room_name = 4;
-  string publisher_id = 5;
-  map<string, string> extra_attributes = 6;
-  int32 idle_timeout = 7;
-  string api_token = 8;
-}
-
-message AgoraEgressConfig {
-  string channel_name = 1;
-  string token = 2;
-  uint32 uid = 3;
-  string publisher_id = 4;
+message MotionAnimation {
+  repeated MotionFrame keyframes = 1;
 }
 
 message ClientConfigureSession {
-  int32 sample_rate = 1;
-  int32 bitrate = 2;
-  AudioFormat audio_format = 3;
-  TransportCompression transport_compression = 4;
-  EgressType egress_type = 5;
-  LiveKitEgressConfig livekit_egress = 6;
-  AgoraEgressConfig agora_egress = 7;
-  map<string, string> extra_params = 8;
+  int32 audio_sample_rate = 1;
+  AudioFormat audio_format = 2;
+  TransportConfig transport = 3;
+  map<string, string> extra_params = 4;
+  TraceContext trace_context = 5;
 }
 
 message ServerConfirmSession {
@@ -71,7 +52,9 @@ message ClientAudioInput {
   string req_id = 1;
   bool end = 2;
   bytes audio = 3;
-  TraceContext trace_context = 4;
+
+  string emotion = 4;
+  optional float strength = 5;
 }
 
 message ServerError {
@@ -81,10 +64,14 @@ message ServerError {
   string message = 4;
 }
 
-message ServerResponseAnimation {
+message ServerResponseMotion {
   string connection_id = 1;
   string req_id = 2;
   bool end = 3;
+  MotionAnimation animation = 4;
+  string avatar_id = 5;
+  TraceContext trace_context = 6;
+  string emotion = 7;
 }
 
 message ClientInterrupt {
@@ -98,7 +85,31 @@ message Message {
     ServerConfirmSession server_confirm_session = 3;
     ClientAudioInput client_audio_input = 4;
     ServerError server_error = 5;
-    ServerResponseAnimation server_response_animation = 6;
-    ClientInterrupt client_interrupt = 8;
+    ServerResponseMotion server_response_motion = 6;
+    ClientInterrupt client_interrupt = 7;
   }
+}
+
+message TransportConfig {
+  oneof destination {
+    WebSocketTransportConfig websocket = 1;
+    LiveKitTransportConfig livekit = 2;
+    AgoraTransportConfig agora = 3;
+  }
+}
+
+message WebSocketTransportConfig {}
+
+message LiveKitTransportConfig {
+  string url = 1;
+  string token = 2;
+  int32 idle_timeout = 3;
+  string agent_identity = 4;
+  map<string, string> extra_attributes = 5;
+}
+
+message AgoraTransportConfig {
+  string channel_name = 1;
+  string token = 2;
+  uint32 uid = 3;
 }

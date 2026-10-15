@@ -2,14 +2,16 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
+from .avatar_detail import AvatarDetail
 from .avatar_session import AvatarSession
 from .errors import AvatarSDKError, AvatarSDKErrorCode, SessionTokenError
 from .session_config import (
     AudioFormat,
     OggOpusEncoderConfig,
     SessionConfig,
-    LiveKitEgressConfig,
-    AgoraEgressConfig,
+    WebSocketTransportConfig,
+    LiveKitTransportConfig,
+    AgoraTransportConfig,
     new_avatar_session,
 )
 from .logid import generate_log_id
@@ -27,6 +29,7 @@ except PackageNotFoundError:  # pragma: no cover - only when imported without in
 
 __all__ = [
     "AvatarSession",
+    "AvatarDetail",
     "SessionTokenError",
     "AvatarSDKError",
     "AvatarSDKErrorCode",
@@ -34,8 +37,9 @@ __all__ = [
     "AudioFormat",
     "OggOpusEncoderConfig",
     "SessionConfig",
-    "LiveKitEgressConfig",
-    "AgoraEgressConfig",
+    "WebSocketTransportConfig",
+    "LiveKitTransportConfig",
+    "AgoraTransportConfig",
     "generate_log_id",
     "prewarm",
     "PrewarmResult",

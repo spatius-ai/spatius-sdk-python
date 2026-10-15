@@ -5,7 +5,7 @@ This example demonstrates how to:
 1. Initialize an avatar session
 2. Connect to the avatar service
 3. Send audio data
-4. Receive animation frames
+4. Receive V3 motion messages
 5. Properly close the session
 """
 
@@ -30,7 +30,7 @@ SESSION_TTL = 2  # minutes
 
 
 class AnimationCollector:
-    """Collects animation frames from the avatar session."""
+    """Collects complete V3 motion Message binaries from the avatar session."""
 
     def __init__(self):
         self.frames: List[bytes] = []
@@ -39,7 +39,7 @@ class AnimationCollector:
         self._done = asyncio.Event()
 
     def transport_frame(self, data: bytes, last: bool):
-        """Callback for receiving animation frames."""
+        """Receive the complete V3 Message binary and its final-message flag."""
         frame_copy = bytes(data)
         self.frames.append(frame_copy)
         if last:
@@ -54,7 +54,7 @@ class AnimationCollector:
     def on_close(self):
         """Callback for handling session close."""
         if not self.last:
-            self.finish(Exception("Avatar session closed before final animation frame"))
+            self.finish(Exception("Avatar session closed before final motion message"))
         else:
             self.finish(None)
 
@@ -69,7 +69,7 @@ class AnimationCollector:
         try:
             await asyncio.wait_for(self._done.wait(), timeout=timeout)
         except asyncio.TimeoutError as e:
-            raise TimeoutError("Timed out waiting for animation frames") from e
+            raise TimeoutError("Timed out waiting for motion messages") from e
 
         if self.error:
             raise self.error
@@ -152,13 +152,13 @@ async def main():
 
         print(f"Sent audio request: {request_id}")
 
-        # Wait for animation frames
-        print("Waiting for animation frames...")
+        # Wait for motion messages
+        print("Waiting for motion messages...")
         await collector.wait(timeout=REQUEST_TIMEOUT)
 
         # Get results
         animations = collector.get_frames_copy()
-        print(f"Received {len(animations)} animation frames")
+        print(f"Received {len(animations)} motion messages")
 
         # Create response (similar to the Go example)
         response = {

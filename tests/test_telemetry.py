@@ -1,3 +1,4 @@
+import asyncio
 import re
 import unittest
 from unittest.mock import patch
@@ -53,6 +54,24 @@ class _FakeConnection:
 
     async def send(self, data):
         self.sent.append(bytes(data))
+
+    async def recv(self):
+        response = message_pb2.Message(
+            type=message_pb2.MESSAGE_SERVER_CONFIRM_SESSION,
+            server_confirm_session=message_pb2.ServerConfirmSession(
+                connection_id="cid"
+            ),
+        )
+        return response.SerializeToString()
+
+    async def close(self):
+        pass
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        await asyncio.Future()
 
 
 class TestTelemetryConfiguration(unittest.TestCase):
@@ -169,7 +188,7 @@ class TestTracePropagation(unittest.IsolatedAsyncioTestCase):
         shutdown_telemetry()
         configure_telemetry("")
 
-    async def test_only_first_audio_chunk_contains_trace_context(self):
+    async def test_handshake_contains_trace_context_and_audio_contains_emotion(self):
         span_exporter = _SpanExporter()
         metric_exporter = _MetricExporter()
         configure_telemetry("https://collector.example.com")
@@ -186,31 +205,52 @@ class TestTracePropagation(unittest.IsolatedAsyncioTestCase):
                     ingress_endpoint_url="wss://api.example.com",
                 )
             )
-            session._connection = _FakeConnection()
+            connection = _FakeConnection()
+            session._session_token = "session-token"
 
-            req_id = await session.send_audio(b"first", end=False)
+            async def fake_connect(*_args, **_kwargs):
+                return connection
+
+            with patch("spatius.avatar_session.websockets.connect", new=fake_connect):
+                await session.start()
+
+            req_id = await session.send_audio(b"first", end=False, emotion="happy")
             await session.send_audio(b"second", end=True)
 
-            first = message_pb2.Message()
-            first.ParseFromString(session._connection.sent[0])
-            second = message_pb2.Message()
-            second.ParseFromString(session._connection.sent[1])
-
-            traceparent = first.client_audio_input.trace_context.traceparent
+            config, first, second = [
+                message_pb2.Message.FromString(payload) for payload in connection.sent
+            ]
+            traceparent = config.client_configure_session.trace_context.traceparent
             self.assertRegex(
                 traceparent,
                 re.compile(r"^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"),
             )
-            self.assertFalse(second.client_audio_input.HasField("trace_context"))
+            self.assertNotIn(
+                "trace_context", first.client_audio_input.DESCRIPTOR.fields_by_name
+            )
+            self.assertEqual(first.client_audio_input.emotion, "happy")
+            self.assertEqual(second.client_audio_input.emotion, "happy")
 
             response = message_pb2.Message()
-            response.type = message_pb2.MESSAGE_SERVER_RESPONSE_ANIMATION
-            response.server_response_animation.req_id = req_id
-            response.server_response_animation.end = True
+            response.type = message_pb2.MESSAGE_SERVER_RESPONSE_MOTION
+            response.server_response_motion.req_id = req_id
+            response.server_response_motion.end = True
             await session._handle_binary_message(response.SerializeToString())
 
             self.assertNotIn(req_id, session._request_telemetry)
             await session.close()
+            shutdown_telemetry()
+            start_span = next(
+                span
+                for span in span_exporter.spans
+                if span.name == "avatar.session.start"
+            )
+            self.assertEqual(
+                traceparent.split("-")[1], f"{start_span.context.trace_id:032x}"
+            )
+            self.assertEqual(
+                traceparent.split("-")[2], f"{start_span.context.span_id:016x}"
+            )
 
 
 if __name__ == "__main__":

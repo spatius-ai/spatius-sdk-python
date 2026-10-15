@@ -44,7 +44,7 @@ class TestPrewarm(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             result.ingress_endpoint_url,
-            "wss://api.eu-central.spatius.ai/v2/driveningress",
+            "wss://api.eu-central.spatius.ai/v3/driveningress",
         )
         self.assertFalse(result.session_token_prefetched)
 
