@@ -1,4 +1,5 @@
 import asyncio
+import math
 import os
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -111,6 +112,16 @@ class TestE2ERequest(unittest.IsolatedAsyncioTestCase):
         bitrate = int(os.getenv("SPATIUS_E2E_BITRATE", "32000"))
         timeout_seconds = float(os.getenv("SPATIUS_E2E_TIMEOUT_SECONDS", "45"))
         chunk_size = int(os.getenv("SPATIUS_E2E_CHUNK_SIZE", "4096"))
+        self.assertGreater(chunk_size, 0)
+        emotion = os.getenv("SPATIUS_E2E_EMOTION")
+        strength_value = os.getenv("SPATIUS_E2E_STRENGTH")
+        strength = float(strength_value) if strength_value is not None else None
+        weights_value = os.getenv("SPATIUS_E2E_EXPECTED_EMOTION_WEIGHTS", "")
+        expected_weights = (
+            [float(value) for value in weights_value.split(",")]
+            if weights_value
+            else None
+        )
         audio_path = Path(
             os.getenv(
                 "SPATIUS_E2E_AUDIO_PATH",
@@ -162,7 +173,8 @@ class TestE2ERequest(unittest.IsolatedAsyncioTestCase):
                 audio_bytes,
                 audio_format,
                 chunk_size,
-                use_internal_ogg_opus_encoder,
+                emotion,
+                strength,
             )
             await collector.wait(timeout=timeout_seconds)
         finally:
@@ -178,6 +190,31 @@ class TestE2ERequest(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(len(keyframes), 0)
         self.assertTrue(all(frame.expr for frame in keyframes))
         self.assertTrue(all(frame.emotion_weights for frame in keyframes))
+        for envelope, is_last in collector.frames:
+            self.assertEqual(envelope.type, message_pb2.MESSAGE_SERVER_RESPONSE_MOTION)
+            motion = envelope.server_response_motion
+            self.assertEqual(motion.req_id, req_id)
+            self.assertEqual(motion.avatar_id, env["SPATIUS_E2E_AVATAR_ID"])
+            self.assertTrue(motion.connection_id)
+            self.assertEqual(motion.end, is_last)
+            if emotion:
+                self.assertEqual(motion.emotion, emotion)
+        for frame in keyframes:
+            for channel in (
+                frame.expr,
+                frame.body_pose,
+                frame.jaw_pose,
+                frame.eyelid,
+                frame.leye_pose,
+                frame.reye_pose,
+                frame.emotion_weights,
+            ):
+                self.assertTrue(all(math.isfinite(value) for value in channel))
+            if expected_weights is not None:
+                self.assertEqual(len(frame.emotion_weights), len(expected_weights))
+                for actual, expected in zip(frame.emotion_weights, expected_weights):
+                    self.assertAlmostEqual(actual, expected, places=6)
+        print(f"received {len(keyframes)} motion frames", flush=True)
 
         last_message, last_flag = collector.frames[-1]
         self.assertTrue(last_flag)
@@ -191,17 +228,28 @@ class TestE2ERequest(unittest.IsolatedAsyncioTestCase):
         audio_bytes: bytes,
         audio_format: AudioFormat,
         chunk_size: int,
-        use_internal_ogg_opus_encoder: bool,
+        emotion: str | None,
+        strength: float | None,
     ) -> str:
-        if audio_format == AudioFormat.OGG_OPUS:
-            for offset in range(0, len(audio_bytes), chunk_size):
-                await session.send_audio(
-                    audio_bytes[offset : offset + chunk_size], end=False
-                )
-
-            return await session.send_audio(b"", end=True)
-
-        return await session.send_audio(audio_bytes, end=True)
+        req_id = ""
+        for offset in range(0, len(audio_bytes), chunk_size):
+            req_id = await session.send_audio(
+                audio_bytes[offset : offset + chunk_size],
+                end=(
+                    audio_format == AudioFormat.PCM_S16LE
+                    and offset + chunk_size >= len(audio_bytes)
+                ),
+                emotion=emotion if offset == 0 else None,
+                strength=strength if offset == 0 else None,
+            )
+        if audio_format == AudioFormat.OGG_OPUS or not audio_bytes:
+            return await session.send_audio(
+                b"",
+                end=True,
+                emotion=emotion if not audio_bytes else None,
+                strength=strength if not audio_bytes else None,
+            )
+        return req_id
 
 
 def _env_flag(name: str) -> bool:

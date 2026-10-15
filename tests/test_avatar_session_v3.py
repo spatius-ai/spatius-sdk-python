@@ -2,8 +2,9 @@ import asyncio
 import importlib.util
 import unittest
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Optional, cast
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import aiohttp
 from websockets.datastructures import Headers
@@ -440,8 +441,13 @@ class TestAvatarSessionV3(unittest.IsolatedAsyncioTestCase):
                 )
                 session._session_token = "tok-1"
                 with (
-                    patch("spatius.avatar_session.websockets.connect", new=fake_connect),
-                    patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
+                    patch(
+                        "spatius.avatar_session.websockets.connect", new=fake_connect
+                    ),
+                    patch(
+                        "spatius.avatar_session.asyncio.create_task",
+                        new=fake_create_task,
+                    ),
                 ):
                     await session.start()
 
@@ -712,7 +718,9 @@ class TestAvatarSessionV3(unittest.IsolatedAsyncioTestCase):
 
         fake_ws: _FakeWebSocket = session._connection  # type: ignore[assignment]
 
-        req_id = await session.send_audio(b"\x00\x00" * 100, end=False, emotion="happy")
+        req_id = await session.send_audio(
+            b"\x00\x00" * 100, end=False, emotion="happy", strength=0.5
+        )
         self.assertEqual(len(fake_ws.sent), 1)
 
         await session.send_audio(b"\x00\x00" * 380, end=True)
@@ -723,6 +731,8 @@ class TestAvatarSessionV3(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(audio_msg.client_audio_input.req_id, req_id)
         self.assertEqual(audio_msg.client_audio_input.emotion, "happy")
+        self.assertTrue(audio_msg.client_audio_input.HasField("strength"))
+        self.assertEqual(audio_msg.client_audio_input.strength, 0.5)
         self.assertEqual(audio_msg.client_audio_input.audio[:4], b"OggS")
         self.assertTrue(audio_msg.client_audio_input.end)
 
@@ -883,6 +893,202 @@ class TestAvatarSessionV3(unittest.IsolatedAsyncioTestCase):
             )
         finally:
             await session.close()
+
+    async def test_strength_preserves_presence_and_resets_after_end(self):
+        session = new_avatar_session(region="us-west")
+        connection = _FakeWebSocket()
+        session._connection = connection
+        try:
+            previous_id = None
+            for strength in (0.0, 0.5, 1.0):
+                with self.subTest(strength=strength):
+                    first_index = len(connection.sent)
+                    req_id = await session.send_audio(b"first", strength=strength)
+                    self.assertNotEqual(req_id, previous_id)
+                    self.assertEqual(await session.send_audio(b"middle"), req_id)
+                    self.assertEqual(
+                        await session.send_audio(b"final", end=True, strength=strength),
+                        req_id,
+                    )
+                    packets = [
+                        message_pb2.Message.FromString(data).client_audio_input
+                        for data in connection.sent[first_index:]
+                    ]
+                    self.assertEqual(
+                        [packet.req_id for packet in packets], [req_id] * 3
+                    )
+                    self.assertTrue(
+                        all(packet.HasField("strength") for packet in packets)
+                    )
+                    self.assertEqual(
+                        [packet.strength for packet in packets], [strength] * 3
+                    )
+                    previous_id = req_id
+            next_id = await session.send_audio(b"default", end=True)
+            self.assertNotEqual(next_id, previous_id)
+            default = message_pb2.Message.FromString(
+                connection.sent[-1]
+            ).client_audio_input
+            self.assertFalse(default.HasField("strength"))
+        finally:
+            await session.close()
+
+    async def test_default_strength_accepts_explicit_one_without_changing_request(self):
+        session = new_avatar_session(region="us-west")
+        connection = _FakeWebSocket()
+        session._connection = connection
+        try:
+            req_id = await session.send_audio(b"first")
+            self.assertFalse(
+                message_pb2.Message.FromString(
+                    connection.sent[0]
+                ).client_audio_input.HasField("strength")
+            )
+            self.assertEqual(await session.send_audio(b"middle", strength=1.0), req_id)
+            with self.assertRaises(ValueError):
+                await session.send_audio(b"discarded", strength=0.0)
+            self.assertEqual(await session.send_audio(b"final", end=True), req_id)
+            packets = [
+                message_pb2.Message.FromString(data).client_audio_input
+                for data in connection.sent
+            ]
+            self.assertEqual(
+                [packet.audio for packet in packets], [b"first", b"middle", b"final"]
+            )
+            self.assertTrue(
+                all(
+                    not packet.HasField("strength") or packet.strength == 1.0
+                    for packet in packets
+                )
+            )
+        finally:
+            await session.close()
+
+    async def test_strength_comparison_uses_protobuf_float_precision(self):
+        session = new_avatar_session(region="us-west")
+        connection = _FakeWebSocket()
+        session._connection = connection
+        try:
+            req_id = await session.send_audio(b"first", strength=0.1)
+            wire_strength = message_pb2.Message.FromString(
+                connection.sent[0]
+            ).client_audio_input.strength
+            self.assertAlmostEqual(wire_strength, 0.1)
+            self.assertEqual(await session.send_audio(b"same", strength=0.1), req_id)
+            self.assertEqual(
+                await session.send_audio(b"wire", end=True, strength=wire_strength),
+                req_id,
+            )
+            self.assertEqual(
+                [
+                    message_pb2.Message.FromString(data).client_audio_input.strength
+                    for data in connection.sent
+                ],
+                [wire_strength] * 3,
+            )
+        finally:
+            await session.close()
+
+    async def test_invalid_strength_does_not_create_or_poison_request(self):
+        session = new_avatar_session(region="us-west")
+        connection = _FakeWebSocket()
+        session._connection = connection
+        try:
+            invalid_values = (
+                float("nan"),
+                float("inf"),
+                -float("inf"),
+                -0.01,
+                1.01,
+                True,
+                False,
+                "0.5",
+                [],
+                0.5j,
+            )
+            for value in invalid_values:
+                with self.subTest(strength=value):
+                    with self.assertRaises(ValueError):
+                        await session.send_audio(
+                            b"discarded", emotion="happy", strength=value
+                        )
+                    self.assertEqual(connection.sent, [])
+                    self.assertIsNone(session._current_req_id)
+            await session.send_audio(b"valid", end=True)
+            packet = message_pb2.Message.FromString(
+                connection.sent[0]
+            ).client_audio_input
+            self.assertEqual(packet.audio, b"valid")
+            self.assertEqual(packet.emotion, "")
+            self.assertFalse(packet.HasField("strength"))
+        finally:
+            await session.close()
+
+    async def test_changing_strength_rejects_before_encoding_buffered_audio(self):
+        session = new_avatar_session(
+            region="us-west",
+            audio_format=AudioFormat.OGG_OPUS,
+            ogg_opus_encoder=OggOpusEncoderConfig(),
+        )
+        connection = _FakeWebSocket()
+        session._connection = connection
+        encoder = Mock()
+        encoder.encode.side_effect = [
+            SimpleNamespace(payload=b"", completed_stream=None),
+            SimpleNamespace(payload=b"encoded", completed_stream=None),
+        ]
+        try:
+            with patch.object(
+                session, "_get_or_create_audio_encoder", return_value=encoder
+            ):
+                req_id = await session.send_audio(
+                    b"buffered", emotion="happy", strength=0.0
+                )
+                self.assertEqual(connection.sent, [])
+                for value in (0.5, float("nan")):
+                    with self.subTest(strength=value):
+                        with self.assertRaises(ValueError):
+                            await session.send_audio(b"discarded", strength=value)
+                        encoder.encode.assert_called_once_with(b"buffered", end=False)
+                        self.assertEqual(connection.sent, [])
+                self.assertEqual(await session.send_audio(b"final", end=True), req_id)
+            self.assertEqual(encoder.encode.call_count, 2)
+            encoder.encode.assert_called_with(b"final", end=True)
+            packet = message_pb2.Message.FromString(
+                connection.sent[0]
+            ).client_audio_input
+            self.assertEqual(packet.audio, b"encoded")
+            self.assertEqual(packet.emotion, "happy")
+            self.assertTrue(packet.HasField("strength"))
+            self.assertEqual(packet.strength, 0.0)
+        finally:
+            await session.close()
+
+    async def test_interrupt_resets_strength_for_next_request(self):
+        session = new_avatar_session(region="us-west")
+        connection = _FakeWebSocket()
+        session._connection = connection
+        try:
+            req_id = await session.send_audio(b"first", strength=0.5)
+            self.assertEqual(await session.interrupt(), req_id)
+            next_id = await session.send_audio(b"next", end=True)
+            self.assertNotEqual(next_id, req_id)
+            packet = message_pb2.Message.FromString(
+                connection.sent[-1]
+            ).client_audio_input
+            self.assertFalse(packet.HasField("strength"))
+        finally:
+            await session.close()
+
+    async def test_close_clears_active_strength(self):
+        session = new_avatar_session(region="us-west")
+        connection = _FakeWebSocket()
+        session._connection = connection
+        await session.send_audio(b"first", strength=0.5)
+        await session.close()
+        self.assertTrue(connection._closed)
+        self.assertIsNone(session._current_req_id)
+        self.assertIsNone(session._current_strength)
 
     async def test_start_raises_on_server_error_during_handshake(self):
         async def fake_connect(url, additional_headers=None, **_kwargs):

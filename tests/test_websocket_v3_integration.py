@@ -109,14 +109,22 @@ class TestLocalV3WebSocket(unittest.IsolatedAsyncioTestCase):
         try:
             await session.init()
             self.assertEqual(await session.start(), "local-connection")
-            req_id = await session.send_audio(b"\x01\x00" * 160, emotion="happy")
+            req_id = await session.send_audio(
+                b"\x01\x00" * 160, emotion="happy", strength=0.5
+            )
             self.assertEqual(await session.send_audio(b"\x02\x00" * 160), req_id)
             self.assertEqual(await session.send_audio(b"", end=True), req_id)
             await asyncio.wait_for(completed.wait(), timeout=5)
-            next_id = await session.send_audio(b"\x03\x00" * 160, emotion="sad")
+            next_id = await session.send_audio(
+                b"\x03\x00" * 160, emotion="sad", strength=0.0
+            )
             self.assertNotEqual(next_id, req_id)
             self.assertEqual(await session.interrupt(), next_id)
             interrupt = await asyncio.wait_for(interrupted, timeout=5)
+            completed.clear()
+            default_id = await session.send_audio(b"\x04\x00" * 160, end=True)
+            self.assertNotEqual(default_id, next_id)
+            await asyncio.wait_for(completed.wait(), timeout=5)
         finally:
             await session.close()
             await runner.cleanup()
@@ -142,20 +150,31 @@ class TestLocalV3WebSocket(unittest.IsolatedAsyncioTestCase):
             if packet.type == message_pb2.MESSAGE_CLIENT_AUDIO_INPUT
         ]
         self.assertEqual([packet.req_id for packet in audio[:3]], [req_id] * 3)
-        self.assertEqual([packet.emotion for packet in audio], ["happy"] * 3 + ["sad"])
-        self.assertEqual([packet.end for packet in audio], [False, False, True, False])
+        self.assertEqual(
+            [packet.emotion for packet in audio], ["happy"] * 3 + ["sad", ""]
+        )
+        self.assertEqual(
+            [packet.end for packet in audio], [False, False, True, False, True]
+        )
+        self.assertEqual(
+            [packet.HasField("strength") for packet in audio],
+            [True, True, True, True, False],
+        )
+        self.assertEqual(
+            [packet.strength for packet in audio[:4]], [0.5, 0.5, 0.5, 0.0]
+        )
         self.assertEqual(
             b"".join(packet.audio for packet in audio[:3]),
             b"\x01\x00" * 160 + b"\x02\x00" * 160,
         )
-        self.assertEqual([end for _, end in frames], [False, True])
-        for envelope, end in frames:
+        self.assertEqual([end for _, end in frames], [False, True, False, True])
+        for index, (envelope, end) in enumerate(frames):
             motion = envelope.server_response_motion
             self.assertEqual(envelope.type, message_pb2.MESSAGE_SERVER_RESPONSE_MOTION)
-            self.assertEqual(motion.req_id, req_id)
+            self.assertEqual(motion.req_id, req_id if index < 2 else default_id)
             self.assertEqual(motion.connection_id, "local-connection")
             self.assertEqual(motion.avatar_id, "local-avatar")
-            self.assertEqual(motion.emotion, "happy")
+            self.assertEqual(motion.emotion, "happy" if index < 2 else "")
             self.assertEqual(motion.end, end)
             self.assertEqual(
                 list(motion.animation.keyframes[0].emotion_weights), [0.25, 0.75]

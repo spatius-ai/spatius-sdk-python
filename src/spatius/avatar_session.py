@@ -4,6 +4,8 @@ import asyncio
 import inspect
 import json
 import logging
+import math
+import struct
 import time
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -255,6 +257,7 @@ class AvatarSession:
         self._connection: Optional[Any] = None
         self._current_req_id: Optional[str] = None
         self._current_emotion = ""
+        self._current_strength: Optional[float] = None
         self._last_req_id: Optional[str] = (
             None  # tracks most recent request for interrupt
         )
@@ -710,7 +713,12 @@ class AvatarSession:
             self._finish_request_telemetry(req_id, end_reason="animation_end")
 
     async def send_audio(
-        self, audio: bytes, end: bool = False, *, emotion: Optional[str] = None
+        self,
+        audio: bytes,
+        end: bool = False,
+        *,
+        emotion: Optional[str] = None,
+        strength: Optional[float] = None,
     ) -> str:
         """
         Send one audio chunk to the avatar service.
@@ -731,12 +739,16 @@ class AvatarSession:
             emotion: Emotion label for a new request. Omit it to use the avatar
                 default. Later chunks may omit it or repeat the same label;
                 changing the label within a request is not allowed.
+            strength: Emotion strength from 0 to 1. Omit it on a new request to
+                use the service default of 1. Later chunks may omit it or repeat
+                the same value; changing strength within a request is not allowed.
 
         Returns:
             Request ID for tracking this audio request.
 
         Raises:
-            ValueError: If connection is not established.
+            ValueError: If connection is not established, emotion or strength is
+                invalid, or either selection changes within a request.
         """
         if self._connection is None:
             raise ValueError("WebSocket connection is not established")
@@ -746,11 +758,27 @@ class AvatarSession:
         if self._current_req_id and emotion and emotion != self._current_emotion:
             raise ValueError("Cannot change emotion within an audio request")
 
+        if strength is not None:
+            if (
+                isinstance(strength, bool)
+                or not isinstance(strength, (int, float))
+                or not 0 <= strength <= 1
+                or not math.isfinite(strength)
+            ):
+                raise ValueError("strength must be a finite number between 0 and 1")
+            strength = struct.unpack("<f", struct.pack("<f", strength))[0]
+            current_strength = (
+                1.0 if self._current_strength is None else self._current_strength
+            )
+            if self._current_req_id and strength != current_strength:
+                raise ValueError("Cannot change strength within an audio request")
+
         # Generate or reuse request ID.
         if not self._current_req_id:
             self._current_req_id = generate_log_id()
             self._last_req_id = self._current_req_id
             self._current_emotion = emotion or ""
+            self._current_strength = strength
 
         req_id = self._current_req_id
 
@@ -774,6 +802,8 @@ class AvatarSession:
         msg.client_audio_input.audio = payload
         msg.client_audio_input.end = end
         msg.client_audio_input.emotion = self._current_emotion
+        if self._current_strength is not None:
+            msg.client_audio_input.strength = self._current_strength
 
         # Serialize and send
         data = msg.SerializeToString()
@@ -801,6 +831,7 @@ class AvatarSession:
         if end:
             self._current_req_id = None
             self._current_emotion = ""
+            self._current_strength = None
             self._audio_encoder = None
 
         return req_id
@@ -894,6 +925,7 @@ class AvatarSession:
         # Clear current request ID so next send_audio creates a new one
         self._current_req_id = None
         self._current_emotion = ""
+        self._current_strength = None
         self._audio_encoder = None
 
         return req_id
@@ -930,6 +962,7 @@ class AvatarSession:
         self._audio_encoder = None
         self._current_req_id = None
         self._current_emotion = ""
+        self._current_strength = None
 
         if self._read_task is not None:
             # If we're calling close() from inside the read task itself (e.g. the

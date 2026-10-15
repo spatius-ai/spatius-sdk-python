@@ -42,12 +42,33 @@ def test_audio_input_emotion_and_interrupt_match_v3_wire_format():
         "end": 2,
         "audio": 3,
         "emotion": 4,
+        "strength": 5,
     }
     interrupt = message_pb2.Message(
         type=message_pb2.MESSAGE_CLIENT_INTERRUPT,
         client_interrupt=message_pb2.ClientInterrupt(req_id="r"),
     )
     assert interrupt.SerializeToString() == bytes.fromhex("08063a030a0172")
+
+
+@pytest.mark.parametrize(
+    ("strength", "wire"),
+    [(0.0, "2d00000000"), (0.5, "2d0000003f"), (1.0, "2d0000803f")],
+)
+def test_audio_strength_preserves_optional_presence_and_float32_wire_value(
+    strength, wire
+):
+    audio = message_pb2.ClientAudioInput()
+    assert not audio.HasField("strength")
+    assert audio.SerializeToString() == b""
+    audio.strength = strength
+    assert audio.SerializeToString() == bytes.fromhex(wire)
+    decoded = message_pb2.ClientAudioInput.FromString(bytes.fromhex(wire))
+    assert decoded.HasField("strength")
+    assert decoded.strength == strength
+    decoded.ClearField("strength")
+    assert not decoded.HasField("strength")
+    assert decoded.SerializeToString() == b""
 
 
 def test_motion_response_preserves_all_frame_values_and_metadata():

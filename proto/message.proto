@@ -54,6 +54,7 @@ message ClientAudioInput {
   bytes audio = 3;
 
   string emotion = 4;
+  optional float strength = 5;
 }
 
 message ServerError {
