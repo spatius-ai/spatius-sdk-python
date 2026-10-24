@@ -1,10 +1,10 @@
 import asyncio
 import importlib.util
 import unittest
-import warnings
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Optional, cast
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import aiohttp
 from websockets.datastructures import Headers
@@ -13,10 +13,11 @@ from websockets.frames import Close
 from websockets.http11 import Response
 
 from spatius import (
+    AgoraTransportConfig,
     AudioFormat,
     AvatarSDKError,
     AvatarSDKErrorCode,
-    LiveKitEgressConfig,
+    LiveKitTransportConfig,
     OggOpusEncoderConfig,
     SessionTokenError,
     new_avatar_session,
@@ -135,7 +136,7 @@ def _mk_server_error(code: int = 123, message: str = "bad") -> bytes:
     return m.SerializeToString()
 
 
-class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
+class TestAvatarSessionV3(unittest.IsolatedAsyncioTestCase):
     def test_new_avatar_session_defaults_endpoints_from_region(self):
         session = new_avatar_session(region="eu-central")
 
@@ -145,7 +146,7 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             session.config.ingress_endpoint_url,
-            "wss://api.eu-central.spatius.ai/v2/driveningress",
+            "wss://api.eu-central.spatius.ai/v3/driveningress",
         )
 
     def test_new_avatar_session_defaults_cn_endpoints_from_region(self):
@@ -157,14 +158,14 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             session.config.ingress_endpoint_url,
-            "wss://api.cn-beijing.spatialwalk.top/v2/driveningress",
+            "wss://api.cn-beijing.spatialwalk.top/v3/driveningress",
         )
 
     def test_new_avatar_session_explicit_endpoints_override_region(self):
         session = new_avatar_session(
             region="eu-central",
             console_endpoint_url="https://console.example.com/v1/console",
-            ingress_endpoint_url="wss://api.example.com/v2/driveningress",
+            ingress_endpoint_url="wss://api.example.com/v3/driveningress",
         )
 
         self.assertEqual(
@@ -173,7 +174,7 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             session.config.ingress_endpoint_url,
-            "wss://api.example.com/v2/driveningress",
+            "wss://api.example.com/v3/driveningress",
         )
 
     async def test_init_raises_structured_session_token_error(self):
@@ -232,7 +233,9 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
 
         async def fake_connect(url, additional_headers=None, **_kwargs):
             captured["url"] = url
-            captured["headers"] = dict(additional_headers or {})
+            captured["headers"] = dict(
+                additional_headers or _kwargs.get("extra_headers") or {}
+            )
             return _FakeWebSocket(recv_messages=[_mk_confirm("server-conn")])
 
         def fake_create_task(coro):
@@ -271,7 +274,7 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         first = message_pb2.Message()
         first.ParseFromString(fake_ws.sent[0])
         self.assertEqual(first.type, message_pb2.MESSAGE_CLIENT_CONFIGURE_SESSION)
-        self.assertEqual(first.client_configure_session.sample_rate, 16000)
+        self.assertEqual(first.client_configure_session.audio_sample_rate, 16000)
 
         await session.close()
 
@@ -345,7 +348,9 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
 
         async def fake_connect(url, additional_headers=None, **_kwargs):
             captured["url"] = url
-            captured["headers"] = dict(additional_headers or {})
+            captured["headers"] = dict(
+                additional_headers or _kwargs.get("extra_headers") or {}
+            )
             return _FakeWebSocket(recv_messages=[_mk_confirm("server-conn")])
 
         def fake_create_task(coro):
@@ -384,7 +389,7 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
             return _DummyTask()
 
         extra_params = {
-            "server_post_process": "false",
+            "request_label": "example",
             "future_option": "enabled",
         }
         session = new_avatar_session(
@@ -414,7 +419,51 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
 
         await session.close()
 
-    async def test_start_with_livekit_egress_sends_new_fields(self):
+    async def test_start_with_agora_sends_numeric_uid_including_default_zero(self):
+        async def fake_connect(url, additional_headers=None, **_kwargs):
+            return _FakeWebSocket(recv_messages=[_mk_confirm("server-conn")])
+
+        def fake_create_task(coro):
+            coro.close()
+            return _DummyTask()
+
+        for identity in ({}, {"uid": 123}, {"uid": 2**32 - 1}):
+            with self.subTest(identity=identity):
+                session = new_avatar_session(
+                    ingress_endpoint_url="https://ingress.example.com",
+                    console_endpoint_url="https://console.example.com",
+                    api_key="api",
+                    avatar_id="avatar-1",
+                    app_id="app-1",
+                    transport=AgoraTransportConfig(
+                        channel_name="room", token="rtc-token", **identity
+                    ),
+                )
+                session._session_token = "tok-1"
+                with (
+                    patch(
+                        "spatius.avatar_session.websockets.connect", new=fake_connect
+                    ),
+                    patch(
+                        "spatius.avatar_session.asyncio.create_task",
+                        new=fake_create_task,
+                    ),
+                ):
+                    await session.start()
+
+                fake_ws = cast(_FakeWebSocket, session._connection)
+                first = message_pb2.Message.FromString(fake_ws.sent[0])
+                self.assertEqual(
+                    first.client_configure_session.transport.WhichOneof("destination"),
+                    "agora",
+                )
+                config = first.client_configure_session.transport.agora
+                self.assertEqual(config.uid, identity.get("uid", 0))
+                self.assertEqual(config.channel_name, "room")
+                self.assertEqual(config.token, "rtc-token")
+                await session.close()
+
+    async def test_start_with_livekit_transport_sends_new_fields(self):
         async def fake_connect(url, additional_headers=None, **_kwargs):
             return _FakeWebSocket(recv_messages=[_mk_confirm("server-conn")])
 
@@ -428,11 +477,10 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
             api_key="api",
             avatar_id="avatar-1",
             app_id="app-1",
-            livekit_egress=LiveKitEgressConfig(
+            transport=LiveKitTransportConfig(
                 url="wss://livekit.example.com",
-                api_token="lk-token",
-                room_name="lk-room",
-                publisher_id="publisher-1",
+                token="lk-token",
+                agent_identity="source-agent",
                 extra_attributes={"role": "avatar", "region": "us-west"},
                 idle_timeout=120,
             ),
@@ -454,38 +502,21 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(first.type, message_pb2.MESSAGE_CLIENT_CONFIGURE_SESSION)
         self.assertEqual(
-            first.client_configure_session.egress_type, message_pb2.EGRESS_TYPE_LIVEKIT
+            first.client_configure_session.transport.WhichOneof("destination"),
+            "livekit",
         )
         self.assertEqual(
-            first.client_configure_session.livekit_egress.extra_attributes,
+            first.client_configure_session.transport.livekit.extra_attributes,
             {"role": "avatar", "region": "us-west"},
         )
         self.assertEqual(
-            first.client_configure_session.livekit_egress.api_token, "lk-token"
+            first.client_configure_session.transport.livekit.token, "lk-token"
         )
         self.assertEqual(
-            first.client_configure_session.livekit_egress.idle_timeout, 120
+            first.client_configure_session.transport.livekit.idle_timeout, 120
         )
 
         await session.close()
-
-    def test_livekit_egress_legacy_credentials_emit_deprecation_warning(self):
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            config = LiveKitEgressConfig(
-                url="wss://livekit.example.com",
-                api_key="lk-api-key",
-                api_secret="lk-api-secret",
-                room_name="lk-room",
-                publisher_id="publisher-1",
-            )
-
-        self.assertEqual(config.api_key, "lk-api-key")
-        self.assertEqual(config.api_secret, "lk-api-secret")
-        self.assertEqual(len(caught), 1)
-        self.assertIs(caught[0].category, FutureWarning)
-        self.assertIn("deprecated", str(caught[0].message).lower())
-        self.assertIn("api_token", str(caught[0].message))
 
     async def test_start_with_ogg_opus_sends_audio_format(self):
         async def fake_connect(url, additional_headers=None, **_kwargs):
@@ -521,8 +552,7 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         first.ParseFromString(fake_ws.sent[0])
 
         self.assertEqual(first.type, message_pb2.MESSAGE_CLIENT_CONFIGURE_SESSION)
-        self.assertEqual(first.client_configure_session.sample_rate, 24000)
-        self.assertEqual(first.client_configure_session.bitrate, 32000)
+        self.assertEqual(first.client_configure_session.audio_sample_rate, 24000)
         self.assertEqual(
             first.client_configure_session.audio_format,
             message_pb2.AUDIO_FORMAT_OGG_OPUS,
@@ -688,7 +718,9 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
 
         fake_ws: _FakeWebSocket = session._connection  # type: ignore[assignment]
 
-        req_id = await session.send_audio(b"\x00\x00" * 100, end=False)
+        req_id = await session.send_audio(
+            b"\x00\x00" * 100, end=False, emotion="happy", strength=0.5
+        )
         self.assertEqual(len(fake_ws.sent), 1)
 
         await session.send_audio(b"\x00\x00" * 380, end=True)
@@ -698,34 +730,365 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         audio_msg.ParseFromString(fake_ws.sent[1])
 
         self.assertEqual(audio_msg.client_audio_input.req_id, req_id)
+        self.assertEqual(audio_msg.client_audio_input.emotion, "happy")
+        self.assertTrue(audio_msg.client_audio_input.HasField("strength"))
+        self.assertEqual(audio_msg.client_audio_input.strength, 0.5)
         self.assertEqual(audio_msg.client_audio_input.audio[:4], b"OggS")
         self.assertTrue(audio_msg.client_audio_input.end)
 
         await session.close()
 
-    async def test_handle_server_response_animation_end_flag(self):
+    async def test_motion_callback_preserves_complete_binary_envelope(self):
         got: list[tuple[bytes, bool]] = []
-
         session = new_avatar_session(
-            ingress_endpoint_url="https://ingress.example.com",
-            console_endpoint_url="https://console.example.com",
-            api_key="api",
-            avatar_id="avatar-1",
-            app_id="app-1",
+            region="us-west",
             transport_frames=lambda data, last: got.append((bytes(data), bool(last))),
         )
+        motion = message_pb2.ServerResponseMotion(
+            connection_id="cid",
+            req_id="rid",
+            avatar_id="avatar-1",
+            emotion="happy",
+            trace_context=message_pb2.TraceContext(
+                traceparent="00-1234567890abcdef1234567890abcdef-1234567890abcdef-01",
+                tracestate="vendor=value",
+            ),
+            animation=message_pb2.MotionAnimation(
+                keyframes=[
+                    message_pb2.MotionFrame(
+                        expr=[0.25, 0.5],
+                        body_pose=[0.0, 0.25, -0.5],
+                        jaw_pose=[0.25, 0.0, 0.0],
+                        eyelid=[0.25, 0.5],
+                        leye_pose=[0.0, -0.25, 0.0],
+                        reye_pose=[0.0, 0.25, 0.0],
+                        emotion_weights=[0.25, 0.75],
+                    )
+                ]
+            ),
+        )
+        envelope = message_pb2.Message(
+            type=message_pb2.MESSAGE_SERVER_RESPONSE_MOTION,
+            server_response_motion=motion,
+        )
+        first_payload = envelope.SerializeToString()
+        await session._handle_binary_message(first_payload)
+        envelope.server_response_motion.end = True
+        final_payload = envelope.SerializeToString()
+        await session._handle_binary_message(final_payload)
 
-        m = message_pb2.Message()
-        m.type = message_pb2.MESSAGE_SERVER_RESPONSE_ANIMATION
-        m.server_response_animation.connection_id = "cid"
-        m.server_response_animation.req_id = "rid"
-        m.server_response_animation.end = True
+        self.assertEqual(got, [(first_payload, False), (final_payload, True)])
+        decoded = message_pb2.Message.FromString(got[-1][0])
+        self.assertEqual(decoded, envelope)
+        self.assertEqual(
+            list(decoded.server_response_motion.animation.keyframes[0].emotion_weights),
+            [0.25, 0.75],
+        )
 
-        payload = m.SerializeToString()
-        await session._handle_binary_message(payload)
+    async def test_motion_type_without_motion_payload_is_protocol_error(self):
+        errors = []
+        frames = []
+        session = new_avatar_session(
+            region="us-west",
+            on_error=errors.append,
+            transport_frames=lambda data, end: frames.append((data, end)),
+        )
+        await session._handle_binary_message(
+            message_pb2.Message(
+                type=message_pb2.MESSAGE_SERVER_RESPONSE_MOTION,
+                server_error=message_pb2.ServerError(message="wrong payload"),
+            ).SerializeToString()
+        )
+        self.assertEqual(frames, [])
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0].code, AvatarSDKErrorCode.protocolError)
 
-        self.assertEqual(len(got), 1)
-        self.assertTrue(got[0][1])
+    async def test_emotion_is_stable_per_request_and_resets_after_end(self):
+        session = new_avatar_session(region="us-west")
+        connection = _FakeWebSocket()
+        session._connection = connection
+        try:
+            req_id = await session.send_audio(b"first", emotion="happy")
+            self.assertEqual(await session.send_audio(b"second"), req_id)
+            self.assertEqual(
+                await session.send_audio(b"", end=True, emotion="happy"), req_id
+            )
+            next_id = await session.send_audio(b"next", end=True)
+            self.assertNotEqual(next_id, req_id)
+            messages = [
+                message_pb2.Message.FromString(data).client_audio_input
+                for data in connection.sent
+            ]
+            self.assertEqual(
+                [msg.emotion for msg in messages], ["happy", "happy", "happy", ""]
+            )
+            self.assertEqual([msg.end for msg in messages], [False, False, True, True])
+            self.assertEqual(
+                [msg.audio for msg in messages], [b"first", b"second", b"", b"next"]
+            )
+        finally:
+            await session.close()
+
+    async def test_changing_emotion_mid_request_rejects_without_sending(self):
+        session = new_avatar_session(region="us-west")
+        connection = _FakeWebSocket()
+        session._connection = connection
+        try:
+            req_id = await session.send_audio(b"first", emotion="happy")
+            with self.assertRaises(ValueError):
+                await session.send_audio(b"discarded", emotion="sad")
+            self.assertEqual(len(connection.sent), 1)
+            self.assertEqual(await session.send_audio(b"final", end=True), req_id)
+            self.assertEqual(
+                message_pb2.Message.FromString(
+                    connection.sent[-1]
+                ).client_audio_input.emotion,
+                "happy",
+            )
+        finally:
+            await session.close()
+
+    async def test_server_default_emotion_cannot_change_mid_request(self):
+        session = new_avatar_session(region="us-west")
+        connection = _FakeWebSocket()
+        session._connection = connection
+        try:
+            req_id = await session.send_audio(b"first")
+            with self.assertRaises(ValueError):
+                await session.send_audio(b"discarded", emotion="happy")
+            self.assertEqual(
+                await session.send_audio(b"final", end=True, emotion=""), req_id
+            )
+            self.assertTrue(
+                all(
+                    not message_pb2.Message.FromString(data).client_audio_input.emotion
+                    for data in connection.sent
+                )
+            )
+        finally:
+            await session.close()
+
+    async def test_interrupt_uses_compact_v3_envelope_and_resets_emotion(self):
+        session = new_avatar_session(region="us-west")
+        connection = _FakeWebSocket()
+        session._connection = connection
+        try:
+            req_id = await session.send_audio(b"first", emotion="happy")
+            self.assertEqual(await session.interrupt(), req_id)
+            interrupt = message_pb2.Message.FromString(connection.sent[1])
+            self.assertEqual(interrupt.type, message_pb2.MESSAGE_CLIENT_INTERRUPT)
+            self.assertEqual(interrupt.type, 6)
+            self.assertEqual(interrupt.WhichOneof("data"), "client_interrupt")
+            self.assertEqual(interrupt.client_interrupt.req_id, req_id)
+            self.assertEqual(
+                interrupt.DESCRIPTOR.fields_by_name["client_interrupt"].number, 7
+            )
+            next_id = await session.send_audio(b"next", end=True, emotion="sad")
+            self.assertNotEqual(next_id, req_id)
+            self.assertEqual(
+                message_pb2.Message.FromString(
+                    connection.sent[-1]
+                ).client_audio_input.emotion,
+                "sad",
+            )
+        finally:
+            await session.close()
+
+    async def test_strength_preserves_presence_and_resets_after_end(self):
+        session = new_avatar_session(region="us-west")
+        connection = _FakeWebSocket()
+        session._connection = connection
+        try:
+            previous_id = None
+            for strength in (0.0, 0.5, 1.0):
+                with self.subTest(strength=strength):
+                    first_index = len(connection.sent)
+                    req_id = await session.send_audio(b"first", strength=strength)
+                    self.assertNotEqual(req_id, previous_id)
+                    self.assertEqual(await session.send_audio(b"middle"), req_id)
+                    self.assertEqual(
+                        await session.send_audio(b"final", end=True, strength=strength),
+                        req_id,
+                    )
+                    packets = [
+                        message_pb2.Message.FromString(data).client_audio_input
+                        for data in connection.sent[first_index:]
+                    ]
+                    self.assertEqual(
+                        [packet.req_id for packet in packets], [req_id] * 3
+                    )
+                    self.assertTrue(
+                        all(packet.HasField("strength") for packet in packets)
+                    )
+                    self.assertEqual(
+                        [packet.strength for packet in packets], [strength] * 3
+                    )
+                    previous_id = req_id
+            next_id = await session.send_audio(b"default", end=True)
+            self.assertNotEqual(next_id, previous_id)
+            default = message_pb2.Message.FromString(
+                connection.sent[-1]
+            ).client_audio_input
+            self.assertFalse(default.HasField("strength"))
+        finally:
+            await session.close()
+
+    async def test_default_strength_accepts_explicit_one_without_changing_request(self):
+        session = new_avatar_session(region="us-west")
+        connection = _FakeWebSocket()
+        session._connection = connection
+        try:
+            req_id = await session.send_audio(b"first")
+            self.assertFalse(
+                message_pb2.Message.FromString(
+                    connection.sent[0]
+                ).client_audio_input.HasField("strength")
+            )
+            self.assertEqual(await session.send_audio(b"middle", strength=1.0), req_id)
+            with self.assertRaises(ValueError):
+                await session.send_audio(b"discarded", strength=0.0)
+            self.assertEqual(await session.send_audio(b"final", end=True), req_id)
+            packets = [
+                message_pb2.Message.FromString(data).client_audio_input
+                for data in connection.sent
+            ]
+            self.assertEqual(
+                [packet.audio for packet in packets], [b"first", b"middle", b"final"]
+            )
+            self.assertTrue(
+                all(
+                    not packet.HasField("strength") or packet.strength == 1.0
+                    for packet in packets
+                )
+            )
+        finally:
+            await session.close()
+
+    async def test_strength_comparison_uses_protobuf_float_precision(self):
+        session = new_avatar_session(region="us-west")
+        connection = _FakeWebSocket()
+        session._connection = connection
+        try:
+            req_id = await session.send_audio(b"first", strength=0.1)
+            wire_strength = message_pb2.Message.FromString(
+                connection.sent[0]
+            ).client_audio_input.strength
+            self.assertAlmostEqual(wire_strength, 0.1)
+            self.assertEqual(await session.send_audio(b"same", strength=0.1), req_id)
+            self.assertEqual(
+                await session.send_audio(b"wire", end=True, strength=wire_strength),
+                req_id,
+            )
+            self.assertEqual(
+                [
+                    message_pb2.Message.FromString(data).client_audio_input.strength
+                    for data in connection.sent
+                ],
+                [wire_strength] * 3,
+            )
+        finally:
+            await session.close()
+
+    async def test_invalid_strength_does_not_create_or_poison_request(self):
+        session = new_avatar_session(region="us-west")
+        connection = _FakeWebSocket()
+        session._connection = connection
+        try:
+            invalid_values = (
+                float("nan"),
+                float("inf"),
+                -float("inf"),
+                -0.01,
+                1.01,
+                True,
+                False,
+                "0.5",
+                [],
+                0.5j,
+            )
+            for value in invalid_values:
+                with self.subTest(strength=value):
+                    with self.assertRaises(ValueError):
+                        await session.send_audio(
+                            b"discarded", emotion="happy", strength=value
+                        )
+                    self.assertEqual(connection.sent, [])
+                    self.assertIsNone(session._current_req_id)
+            await session.send_audio(b"valid", end=True)
+            packet = message_pb2.Message.FromString(
+                connection.sent[0]
+            ).client_audio_input
+            self.assertEqual(packet.audio, b"valid")
+            self.assertEqual(packet.emotion, "")
+            self.assertFalse(packet.HasField("strength"))
+        finally:
+            await session.close()
+
+    async def test_changing_strength_rejects_before_encoding_buffered_audio(self):
+        session = new_avatar_session(
+            region="us-west",
+            audio_format=AudioFormat.OGG_OPUS,
+            ogg_opus_encoder=OggOpusEncoderConfig(),
+        )
+        connection = _FakeWebSocket()
+        session._connection = connection
+        encoder = Mock()
+        encoder.encode.side_effect = [
+            SimpleNamespace(payload=b"", completed_stream=None),
+            SimpleNamespace(payload=b"encoded", completed_stream=None),
+        ]
+        try:
+            with patch.object(
+                session, "_get_or_create_audio_encoder", return_value=encoder
+            ):
+                req_id = await session.send_audio(
+                    b"buffered", emotion="happy", strength=0.0
+                )
+                self.assertEqual(connection.sent, [])
+                for value in (0.5, float("nan")):
+                    with self.subTest(strength=value):
+                        with self.assertRaises(ValueError):
+                            await session.send_audio(b"discarded", strength=value)
+                        encoder.encode.assert_called_once_with(b"buffered", end=False)
+                        self.assertEqual(connection.sent, [])
+                self.assertEqual(await session.send_audio(b"final", end=True), req_id)
+            self.assertEqual(encoder.encode.call_count, 2)
+            encoder.encode.assert_called_with(b"final", end=True)
+            packet = message_pb2.Message.FromString(
+                connection.sent[0]
+            ).client_audio_input
+            self.assertEqual(packet.audio, b"encoded")
+            self.assertEqual(packet.emotion, "happy")
+            self.assertTrue(packet.HasField("strength"))
+            self.assertEqual(packet.strength, 0.0)
+        finally:
+            await session.close()
+
+    async def test_interrupt_resets_strength_for_next_request(self):
+        session = new_avatar_session(region="us-west")
+        connection = _FakeWebSocket()
+        session._connection = connection
+        try:
+            req_id = await session.send_audio(b"first", strength=0.5)
+            self.assertEqual(await session.interrupt(), req_id)
+            next_id = await session.send_audio(b"next", end=True)
+            self.assertNotEqual(next_id, req_id)
+            packet = message_pb2.Message.FromString(
+                connection.sent[-1]
+            ).client_audio_input
+            self.assertFalse(packet.HasField("strength"))
+        finally:
+            await session.close()
+
+    async def test_close_clears_active_strength(self):
+        session = new_avatar_session(region="us-west")
+        connection = _FakeWebSocket()
+        session._connection = connection
+        await session.send_audio(b"first", strength=0.5)
+        await session.close()
+        self.assertTrue(connection._closed)
+        self.assertIsNone(session._current_req_id)
+        self.assertIsNone(session._current_strength)
 
     async def test_start_raises_on_server_error_during_handshake(self):
         async def fake_connect(url, additional_headers=None, **_kwargs):

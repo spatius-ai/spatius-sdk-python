@@ -47,7 +47,7 @@ class RequestResult:
 
 @dataclass
 class AnimationCollector:
-    """Collects animation frames from an avatar session."""
+    """Collects complete V3 motion Message binaries from an avatar session."""
 
     frames: list[bytes] = field(default_factory=list)
     last: bool = False
@@ -55,7 +55,7 @@ class AnimationCollector:
     _done: asyncio.Event = field(default_factory=asyncio.Event)
 
     def transport_frame(self, data: bytes, last: bool) -> None:
-        """Callback for receiving animation frames."""
+        """Receive the complete V3 Message binary and its final-message flag."""
         self.frames.append(bytes(data))
         if last:
             self.last = True
@@ -70,7 +70,7 @@ class AnimationCollector:
     def on_close(self) -> None:
         """Callback for handling session close."""
         if not self.last and not self.error:
-            self.error = Exception("Session closed before final animation frame")
+            self.error = Exception("Session closed before final motion message")
         self._done.set()
 
     def reset(self) -> None:
@@ -85,7 +85,7 @@ class AnimationCollector:
         try:
             await asyncio.wait_for(self._done.wait(), timeout=timeout)
         except asyncio.TimeoutError as e:
-            raise TimeoutError("Timed out waiting for animation frames") from e
+            raise TimeoutError("Timed out waiting for motion messages") from e
 
         if self.error:
             raise self.error
