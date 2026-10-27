@@ -6,14 +6,13 @@ This example exposes a simple HTTP API that:
 - Returns a PCM audio clip at that sample rate (loaded from tests/fixtures/audio/audio_{rate}.pcm)
 - Uses the SDK to make a real request to the avatar service and returns:
   - The audio bytes (base64 in JSON)
-  - The list of base64-encoded protobuf `message.Message` binaries received from the service
-    (typically `MESSAGE_SERVER_RESPONSE_ANIMATION`, with `end=true` on the final frame).
+  - The list of base64-encoded protobuf V3 `Message` binaries received from the service
+    (typically `MESSAGE_SERVER_RESPONSE_MOTION`, with `end=true` on the final message).
 
 Notes:
-- This is a *server-side* helper example. It does not connect to the websocket ingress.
-- The SDK does not need to unmarshal animation payloads; consumers receive the original
-  Message binary data via the callback in the websocket flow. Here we return those same
-  binary protobuf messages over HTTP (base64 in JSON) for convenience/testing.
+- This server-side helper connects to the V3 WebSocket service through the SDK.
+- Consumers receive the complete original V3 Message binary via the callback.
+  Here we return those same protobuf messages over HTTP (base64 in JSON).
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ from typing import Any, Optional
 
 from aiohttp import web
 
-from spatius import AvatarSDKError, SessionTokenError, new_avatar_session
+from spatius import AvatarSDKError, Expression, SessionTokenError, new_avatar_session
 
 _AUDIO_RE = re.compile(r"^audio_(?P<rate>\d+)\.pcm$")
 
@@ -150,6 +149,9 @@ async def handle_generate(request: web.Request) -> web.Response:
     try:
         await session.init()
         connection_id = await session.start()
+        # each reply opens a turn with its expression; use the avatar's default
+        detail = await session.get_avatar_detail()
+        await session.set_expression([Expression(detail.default_emotion, 1.0)])
         req_id = await session.send_audio(audio, end=True)
 
         import asyncio

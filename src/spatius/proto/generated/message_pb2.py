@@ -4,68 +4,104 @@
 # source: message.proto
 # Protobuf Python Version: 5.28.3
 """Generated protocol buffer code."""
+
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import descriptor_pool as _descriptor_pool
 from google.protobuf import runtime_version as _runtime_version
 from google.protobuf import symbol_database as _symbol_database
 from google.protobuf.internal import builder as _builder
+
 _runtime_version.ValidateProtobufRuntimeVersion(
-    _runtime_version.Domain.PUBLIC,
-    5,
-    28,
-    3,
-    '',
-    'message.proto'
+    _runtime_version.Domain.PUBLIC, 5, 28, 3, "", "message.proto"
 )
 # @@protoc_insertion_point(imports)
 
 _sym_db = _symbol_database.Default()
 
 
-
-
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rmessage.proto\x12\x07message\"\x81\x03\n\x13LiveKitEgressConfig\x12\x10\n\x03url\x18\x01 \x01(\tR\x03url\x12\x17\n\x07\x61pi_key\x18\x02 \x01(\tR\x06\x61piKey\x12\x1d\n\napi_secret\x18\x03 \x01(\tR\tapiSecret\x12\x1b\n\troom_name\x18\x04 \x01(\tR\x08roomName\x12!\n\x0cpublisher_id\x18\x05 \x01(\tR\x0bpublisherId\x12\\\n\x10\x65xtra_attributes\x18\x06 \x03(\x0b\x32\x31.message.LiveKitEgressConfig.ExtraAttributesEntryR\x0f\x65xtraAttributes\x12!\n\x0cidle_timeout\x18\x07 \x01(\x05R\x0bidleTimeout\x12\x1b\n\tapi_token\x18\x08 \x01(\tR\x08\x61piToken\x1a\x42\n\x14\x45xtraAttributesEntry\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value:\x02\x38\x01\"\x81\x01\n\x11\x41goraEgressConfig\x12!\n\x0c\x63hannel_name\x18\x01 \x01(\tR\x0b\x63hannelName\x12\x14\n\x05token\x18\x02 \x01(\tR\x05token\x12\x10\n\x03uid\x18\x03 \x01(\rR\x03uid\x12!\n\x0cpublisher_id\x18\x04 \x01(\tR\x0bpublisherId\"\xaf\x04\n\x16\x43lientConfigureSession\x12\x1f\n\x0bsample_rate\x18\x01 \x01(\x05R\nsampleRate\x12\x18\n\x07\x62itrate\x18\x02 \x01(\x05R\x07\x62itrate\x12\x37\n\x0c\x61udio_format\x18\x03 \x01(\x0e\x32\x14.message.AudioFormatR\x0b\x61udioFormat\x12R\n\x15transport_compression\x18\x04 \x01(\x0e\x32\x1d.message.TransportCompressionR\x14transportCompression\x12\x34\n\x0b\x65gress_type\x18\x05 \x01(\x0e\x32\x13.message.EgressTypeR\negressType\x12\x43\n\x0elivekit_egress\x18\x06 \x01(\x0b\x32\x1c.message.LiveKitEgressConfigR\rlivekitEgress\x12=\n\x0c\x61gora_egress\x18\x07 \x01(\x0b\x32\x1a.message.AgoraEgressConfigR\x0b\x61goraEgress\x12S\n\x0c\x65xtra_params\x18\x08 \x03(\x0b\x32\x30.message.ClientConfigureSession.ExtraParamsEntryR\x0b\x65xtraParams\x1a>\n\x10\x45xtraParamsEntry\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value:\x02\x38\x01\";\n\x14ServerConfirmSession\x12#\n\rconnection_id\x18\x01 \x01(\tR\x0c\x63onnectionId\"P\n\x0cTraceContext\x12 \n\x0btraceparent\x18\x01 \x01(\tR\x0btraceparent\x12\x1e\n\ntracestate\x18\x02 \x01(\tR\ntracestate\"\x8d\x01\n\x10\x43lientAudioInput\x12\x15\n\x06req_id\x18\x01 \x01(\tR\x05reqId\x12\x10\n\x03\x65nd\x18\x02 \x01(\x08R\x03\x65nd\x12\x14\n\x05\x61udio\x18\x03 \x01(\x0cR\x05\x61udio\x12:\n\rtrace_context\x18\x04 \x01(\x0b\x32\x15.message.TraceContextR\x0ctraceContext\"w\n\x0bServerError\x12#\n\rconnection_id\x18\x01 \x01(\tR\x0c\x63onnectionId\x12\x15\n\x06req_id\x18\x02 \x01(\tR\x05reqId\x12\x12\n\x04\x63ode\x18\x03 \x01(\x05R\x04\x63ode\x12\x18\n\x07message\x18\x04 \x01(\tR\x07message\"g\n\x17ServerResponseAnimation\x12#\n\rconnection_id\x18\x01 \x01(\tR\x0c\x63onnectionId\x12\x15\n\x06req_id\x18\x02 \x01(\tR\x05reqId\x12\x10\n\x03\x65nd\x18\x03 \x01(\x08R\x03\x65nd\"(\n\x0f\x43lientInterrupt\x12\x15\n\x06req_id\x18\x01 \x01(\tR\x05reqId\"\x9c\x04\n\x07Message\x12(\n\x04type\x18\x01 \x01(\x0e\x32\x14.message.MessageTypeR\x04type\x12[\n\x18\x63lient_configure_session\x18\x02 \x01(\x0b\x32\x1f.message.ClientConfigureSessionH\x00R\x16\x63lientConfigureSession\x12U\n\x16server_confirm_session\x18\x03 \x01(\x0b\x32\x1d.message.ServerConfirmSessionH\x00R\x14serverConfirmSession\x12I\n\x12\x63lient_audio_input\x18\x04 \x01(\x0b\x32\x19.message.ClientAudioInputH\x00R\x10\x63lientAudioInput\x12\x39\n\x0cserver_error\x18\x05 \x01(\x0b\x32\x14.message.ServerErrorH\x00R\x0bserverError\x12^\n\x19server_response_animation\x18\x06 \x01(\x0b\x32 .message.ServerResponseAnimationH\x00R\x17serverResponseAnimation\x12\x45\n\x10\x63lient_interrupt\x18\x08 \x01(\x0b\x32\x18.message.ClientInterruptH\x00R\x0f\x63lientInterruptB\x06\n\x04\x64\x61ta*\xef\x01\n\x0bMessageType\x12\x17\n\x13MESSAGE_UNSPECIFIED\x10\x00\x12$\n MESSAGE_CLIENT_CONFIGURE_SESSION\x10\x01\x12\"\n\x1eMESSAGE_SERVER_CONFIRM_SESSION\x10\x02\x12\x1e\n\x1aMESSAGE_CLIENT_AUDIO_INPUT\x10\x03\x12\x18\n\x14MESSAGE_SERVER_ERROR\x10\x04\x12%\n!MESSAGE_SERVER_RESPONSE_ANIMATION\x10\x05\x12\x1c\n\x18MESSAGE_CLIENT_INTERRUPT\x10\x07*D\n\x0b\x41udioFormat\x12\x1a\n\x16\x41UDIO_FORMAT_PCM_S16LE\x10\x00\x12\x19\n\x15\x41UDIO_FORMAT_OGG_OPUS\x10\x01*6\n\x14TransportCompression\x12\x1e\n\x1aTRANSPORT_COMPRESSION_NONE\x10\x00*Y\n\nEgressType\x12\x1b\n\x17\x45GRESS_TYPE_UNSPECIFIED\x10\x00\x12\x17\n\x13\x45GRESS_TYPE_LIVEKIT\x10\x01\x12\x15\n\x11\x45GRESS_TYPE_AGORA\x10\x02\x42\x03\x90\x01\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
+    b'\n\rmessage.proto\x12\x07message"\x82\x02\n\x0bMotionFrame\x12\x16\n\x04\x65xpr\x18\x01 \x03(\x02\x42\x02\x10\x01R\x04\x65xpr\x12\x1f\n\tbody_pose\x18\x02 \x03(\x02\x42\x02\x10\x01R\x08\x62odyPose\x12\x1d\n\x08jaw_pose\x18\x03 \x03(\x02\x42\x02\x10\x01R\x07jawPose\x12\x1a\n\x06\x65yelid\x18\x04 \x03(\x02\x42\x02\x10\x01R\x06\x65yelid\x12\x1f\n\tleye_pose\x18\x05 \x03(\x02\x42\x02\x10\x01R\x08leyePose\x12\x1f\n\treye_pose\x18\x06 \x03(\x02\x42\x02\x10\x01R\x08reyePose\x12+\n\x0f\x65motion_weights\x18\x07 \x03(\x02\x42\x02\x10\x01R\x0e\x65motionWeights\x12\x10\n\x03pbx\x18\x08 \x01(\x0cR\x03pbx"E\n\x0fMotionAnimation\x12\x32\n\tkeyframes\x18\x01 \x03(\x0b\x32\x14.message.MotionFrameR\tkeyframes"\x86\x03\n\x16\x43lientConfigureSession\x12*\n\x11\x61udio_sample_rate\x18\x01 \x01(\x05R\x0f\x61udioSampleRate\x12\x37\n\x0c\x61udio_format\x18\x02 \x01(\x0e\x32\x14.message.AudioFormatR\x0b\x61udioFormat\x12\x36\n\ttransport\x18\x03 \x01(\x0b\x32\x18.message.TransportConfigR\ttransport\x12S\n\x0c\x65xtra_params\x18\x04 \x03(\x0b\x32\x30.message.ClientConfigureSession.ExtraParamsEntryR\x0b\x65xtraParams\x12:\n\rtrace_context\x18\x05 \x01(\x0b\x32\x15.message.TraceContextR\x0ctraceContext\x1a>\n\x10\x45xtraParamsEntry\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value:\x02\x38\x01";\n\x14ServerConfirmSession\x12#\n\rconnection_id\x18\x01 \x01(\tR\x0c\x63onnectionId"P\n\x0cTraceContext\x12 \n\x0btraceparent\x18\x01 \x01(\tR\x0btraceparent\x12\x1e\n\ntracestate\x18\x02 \x01(\tR\ntracestate"Q\n\x10\x43lientAudioInput\x12\x15\n\x06req_id\x18\x01 \x01(\tR\x05reqId\x12\x10\n\x03\x65nd\x18\x02 \x01(\x08R\x03\x65nd\x12\x14\n\x05\x61udio\x18\x03 \x01(\x0cR\x05\x61udio"-\n\x14\x43lientUserSpeakStart\x12\x15\n\x06req_id\x18\x01 \x01(\tR\x05reqId">\n\nExpression\x12\x14\n\x05label\x18\x01 \x01(\tR\x05label\x12\x1a\n\x08strength\x18\x02 \x01(\x02R\x08strength"a\n\x15\x43lientTriggerReaction\x12\x15\n\x06req_id\x18\x01 \x01(\tR\x05reqId\x12\x31\n\treactions\x18\x02 \x03(\x0b\x32\x13.message.ExpressionR\treactions"+\n\x12\x43lientUserSpeakEnd\x12\x15\n\x06req_id\x18\x01 \x01(\tR\x05reqId"c\n\x13\x43lientSetExpression\x12\x15\n\x06req_id\x18\x01 \x01(\tR\x05reqId\x12\x35\n\x0b\x65xpressions\x18\x02 \x03(\x0b\x32\x13.message.ExpressionR\x0b\x65xpressions"w\n\x0bServerError\x12#\n\rconnection_id\x18\x01 \x01(\tR\x0c\x63onnectionId\x12\x15\n\x06req_id\x18\x02 \x01(\tR\x05reqId\x12\x12\n\x04\x63ode\x18\x03 \x01(\x05R\x04\x63ode\x12\x18\n\x07message\x18\x04 \x01(\tR\x07message"\x8f\x02\n\x14ServerResponseMotion\x12#\n\rconnection_id\x18\x01 \x01(\tR\x0c\x63onnectionId\x12\x15\n\x06req_id\x18\x02 \x01(\tR\x05reqId\x12\x10\n\x03\x65nd\x18\x03 \x01(\x08R\x03\x65nd\x12\x36\n\tanimation\x18\x04 \x01(\x0b\x32\x18.message.MotionAnimationR\tanimation\x12\x1b\n\tavatar_id\x18\x05 \x01(\tR\x08\x61vatarId\x12:\n\rtrace_context\x18\x06 \x01(\x0b\x32\x15.message.TraceContextR\x0ctraceContext\x12\x18\n\x07\x65motion\x18\x07 \x01(\tR\x07\x65motion"(\n\x0f\x43lientInterrupt\x12\x15\n\x06req_id\x18\x01 \x01(\tR\x05reqId"\xeb\x06\n\x07Message\x12(\n\x04type\x18\x01 \x01(\x0e\x32\x14.message.MessageTypeR\x04type\x12[\n\x18\x63lient_configure_session\x18\x02 \x01(\x0b\x32\x1f.message.ClientConfigureSessionH\x00R\x16\x63lientConfigureSession\x12U\n\x16server_confirm_session\x18\x03 \x01(\x0b\x32\x1d.message.ServerConfirmSessionH\x00R\x14serverConfirmSession\x12I\n\x12\x63lient_audio_input\x18\x04 \x01(\x0b\x32\x19.message.ClientAudioInputH\x00R\x10\x63lientAudioInput\x12\x39\n\x0cserver_error\x18\x05 \x01(\x0b\x32\x14.message.ServerErrorH\x00R\x0bserverError\x12U\n\x16server_response_motion\x18\x06 \x01(\x0b\x32\x1d.message.ServerResponseMotionH\x00R\x14serverResponseMotion\x12\x45\n\x10\x63lient_interrupt\x18\x07 \x01(\x0b\x32\x18.message.ClientInterruptH\x00R\x0f\x63lientInterrupt\x12V\n\x17\x63lient_user_speak_start\x18\x08 \x01(\x0b\x32\x1d.message.ClientUserSpeakStartH\x00R\x14\x63lientUserSpeakStart\x12X\n\x17\x63lient_trigger_reaction\x18\t \x01(\x0b\x32\x1e.message.ClientTriggerReactionH\x00R\x15\x63lientTriggerReaction\x12P\n\x15\x63lient_user_speak_end\x18\n \x01(\x0b\x32\x1b.message.ClientUserSpeakEndH\x00R\x12\x63lientUserSpeakEnd\x12R\n\x15\x63lient_set_expression\x18\x0b \x01(\x0b\x32\x1c.message.ClientSetExpressionH\x00R\x13\x63lientSetExpressionB\x06\n\x04\x64\x61ta"\xd7\x01\n\x0fTransportConfig\x12\x41\n\twebsocket\x18\x01 \x01(\x0b\x32!.message.WebSocketTransportConfigH\x00R\twebsocket\x12;\n\x07livekit\x18\x02 \x01(\x0b\x32\x1f.message.LiveKitTransportConfigH\x00R\x07livekit\x12\x35\n\x05\x61gora\x18\x03 \x01(\x0b\x32\x1d.message.AgoraTransportConfigH\x00R\x05\x61goraB\r\n\x0b\x64\x65stination"\x1a\n\x18WebSocketTransportConfig"\xaf\x02\n\x16LiveKitTransportConfig\x12\x10\n\x03url\x18\x01 \x01(\tR\x03url\x12\x14\n\x05token\x18\x02 \x01(\tR\x05token\x12!\n\x0cidle_timeout\x18\x03 \x01(\x05R\x0bidleTimeout\x12%\n\x0e\x61gent_identity\x18\x04 \x01(\tR\ragentIdentity\x12_\n\x10\x65xtra_attributes\x18\x05 \x03(\x0b\x32\x34.message.LiveKitTransportConfig.ExtraAttributesEntryR\x0f\x65xtraAttributes\x1a\x42\n\x14\x45xtraAttributesEntry\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value:\x02\x38\x01"a\n\x14\x41goraTransportConfig\x12!\n\x0c\x63hannel_name\x18\x01 \x01(\tR\x0b\x63hannelName\x12\x14\n\x05token\x18\x02 \x01(\tR\x05token\x12\x10\n\x03uid\x18\x03 \x01(\rR\x03uid*\xfc\x02\n\x0bMessageType\x12\x17\n\x13MESSAGE_UNSPECIFIED\x10\x00\x12$\n MESSAGE_CLIENT_CONFIGURE_SESSION\x10\x01\x12"\n\x1eMESSAGE_SERVER_CONFIRM_SESSION\x10\x02\x12\x1e\n\x1aMESSAGE_CLIENT_AUDIO_INPUT\x10\x03\x12\x18\n\x14MESSAGE_SERVER_ERROR\x10\x04\x12"\n\x1eMESSAGE_SERVER_RESPONSE_MOTION\x10\x05\x12\x1c\n\x18MESSAGE_CLIENT_INTERRUPT\x10\x06\x12#\n\x1fMESSAGE_CLIENT_USER_SPEAK_START\x10\x07\x12#\n\x1fMESSAGE_CLIENT_TRIGGER_REACTION\x10\x08\x12!\n\x1dMESSAGE_CLIENT_USER_SPEAK_END\x10\t\x12!\n\x1dMESSAGE_CLIENT_SET_EXPRESSION\x10\n*D\n\x0b\x41udioFormat\x12\x1a\n\x16\x41UDIO_FORMAT_PCM_S16LE\x10\x00\x12\x19\n\x15\x41UDIO_FORMAT_OGG_OPUS\x10\x01\x62\x06proto3'
+)
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
-_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'message_pb2', _globals)
+_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, "message_pb2", _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
-  _globals['DESCRIPTOR']._loaded_options = None
-  _globals['DESCRIPTOR']._serialized_options = b'\220\001\001'
-  _globals['_LIVEKITEGRESSCONFIG_EXTRAATTRIBUTESENTRY']._loaded_options = None
-  _globals['_LIVEKITEGRESSCONFIG_EXTRAATTRIBUTESENTRY']._serialized_options = b'8\001'
-  _globals['_CLIENTCONFIGURESESSION_EXTRAPARAMSENTRY']._loaded_options = None
-  _globals['_CLIENTCONFIGURESESSION_EXTRAPARAMSENTRY']._serialized_options = b'8\001'
-  _globals['_MESSAGETYPE']._serialized_start=2207
-  _globals['_MESSAGETYPE']._serialized_end=2446
-  _globals['_AUDIOFORMAT']._serialized_start=2448
-  _globals['_AUDIOFORMAT']._serialized_end=2516
-  _globals['_TRANSPORTCOMPRESSION']._serialized_start=2518
-  _globals['_TRANSPORTCOMPRESSION']._serialized_end=2572
-  _globals['_EGRESSTYPE']._serialized_start=2574
-  _globals['_EGRESSTYPE']._serialized_end=2663
-  _globals['_LIVEKITEGRESSCONFIG']._serialized_start=27
-  _globals['_LIVEKITEGRESSCONFIG']._serialized_end=412
-  _globals['_LIVEKITEGRESSCONFIG_EXTRAATTRIBUTESENTRY']._serialized_start=346
-  _globals['_LIVEKITEGRESSCONFIG_EXTRAATTRIBUTESENTRY']._serialized_end=412
-  _globals['_AGORAEGRESSCONFIG']._serialized_start=415
-  _globals['_AGORAEGRESSCONFIG']._serialized_end=544
-  _globals['_CLIENTCONFIGURESESSION']._serialized_start=547
-  _globals['_CLIENTCONFIGURESESSION']._serialized_end=1106
-  _globals['_CLIENTCONFIGURESESSION_EXTRAPARAMSENTRY']._serialized_start=1044
-  _globals['_CLIENTCONFIGURESESSION_EXTRAPARAMSENTRY']._serialized_end=1106
-  _globals['_SERVERCONFIRMSESSION']._serialized_start=1108
-  _globals['_SERVERCONFIRMSESSION']._serialized_end=1167
-  _globals['_TRACECONTEXT']._serialized_start=1169
-  _globals['_TRACECONTEXT']._serialized_end=1249
-  _globals['_CLIENTAUDIOINPUT']._serialized_start=1252
-  _globals['_CLIENTAUDIOINPUT']._serialized_end=1393
-  _globals['_SERVERERROR']._serialized_start=1395
-  _globals['_SERVERERROR']._serialized_end=1514
-  _globals['_SERVERRESPONSEANIMATION']._serialized_start=1516
-  _globals['_SERVERRESPONSEANIMATION']._serialized_end=1619
-  _globals['_CLIENTINTERRUPT']._serialized_start=1621
-  _globals['_CLIENTINTERRUPT']._serialized_end=1661
-  _globals['_MESSAGE']._serialized_start=1664
-  _globals['_MESSAGE']._serialized_end=2204
+    DESCRIPTOR._loaded_options = None
+    _globals["_MOTIONFRAME"].fields_by_name["expr"]._loaded_options = None
+    _globals["_MOTIONFRAME"].fields_by_name["expr"]._serialized_options = b"\020\001"
+    _globals["_MOTIONFRAME"].fields_by_name["body_pose"]._loaded_options = None
+    _globals["_MOTIONFRAME"].fields_by_name[
+        "body_pose"
+    ]._serialized_options = b"\020\001"
+    _globals["_MOTIONFRAME"].fields_by_name["jaw_pose"]._loaded_options = None
+    _globals["_MOTIONFRAME"].fields_by_name[
+        "jaw_pose"
+    ]._serialized_options = b"\020\001"
+    _globals["_MOTIONFRAME"].fields_by_name["eyelid"]._loaded_options = None
+    _globals["_MOTIONFRAME"].fields_by_name["eyelid"]._serialized_options = b"\020\001"
+    _globals["_MOTIONFRAME"].fields_by_name["leye_pose"]._loaded_options = None
+    _globals["_MOTIONFRAME"].fields_by_name[
+        "leye_pose"
+    ]._serialized_options = b"\020\001"
+    _globals["_MOTIONFRAME"].fields_by_name["reye_pose"]._loaded_options = None
+    _globals["_MOTIONFRAME"].fields_by_name[
+        "reye_pose"
+    ]._serialized_options = b"\020\001"
+    _globals["_MOTIONFRAME"].fields_by_name["emotion_weights"]._loaded_options = None
+    _globals["_MOTIONFRAME"].fields_by_name[
+        "emotion_weights"
+    ]._serialized_options = b"\020\001"
+    _globals["_CLIENTCONFIGURESESSION_EXTRAPARAMSENTRY"]._loaded_options = None
+    _globals["_CLIENTCONFIGURESESSION_EXTRAPARAMSENTRY"]._serialized_options = b"8\001"
+    _globals["_LIVEKITTRANSPORTCONFIG_EXTRAATTRIBUTESENTRY"]._loaded_options = None
+    _globals[
+        "_LIVEKITTRANSPORTCONFIG_EXTRAATTRIBUTESENTRY"
+    ]._serialized_options = b"8\001"
+    _globals["_MESSAGETYPE"]._serialized_start = 3300
+    _globals["_MESSAGETYPE"]._serialized_end = 3680
+    _globals["_AUDIOFORMAT"]._serialized_start = 3682
+    _globals["_AUDIOFORMAT"]._serialized_end = 3750
+    _globals["_MOTIONFRAME"]._serialized_start = 27
+    _globals["_MOTIONFRAME"]._serialized_end = 285
+    _globals["_MOTIONANIMATION"]._serialized_start = 287
+    _globals["_MOTIONANIMATION"]._serialized_end = 356
+    _globals["_CLIENTCONFIGURESESSION"]._serialized_start = 359
+    _globals["_CLIENTCONFIGURESESSION"]._serialized_end = 749
+    _globals["_CLIENTCONFIGURESESSION_EXTRAPARAMSENTRY"]._serialized_start = 687
+    _globals["_CLIENTCONFIGURESESSION_EXTRAPARAMSENTRY"]._serialized_end = 749
+    _globals["_SERVERCONFIRMSESSION"]._serialized_start = 751
+    _globals["_SERVERCONFIRMSESSION"]._serialized_end = 810
+    _globals["_TRACECONTEXT"]._serialized_start = 812
+    _globals["_TRACECONTEXT"]._serialized_end = 892
+    _globals["_CLIENTAUDIOINPUT"]._serialized_start = 894
+    _globals["_CLIENTAUDIOINPUT"]._serialized_end = 975
+    _globals["_CLIENTUSERSPEAKSTART"]._serialized_start = 977
+    _globals["_CLIENTUSERSPEAKSTART"]._serialized_end = 1022
+    _globals["_EXPRESSION"]._serialized_start = 1024
+    _globals["_EXPRESSION"]._serialized_end = 1086
+    _globals["_CLIENTTRIGGERREACTION"]._serialized_start = 1088
+    _globals["_CLIENTTRIGGERREACTION"]._serialized_end = 1185
+    _globals["_CLIENTUSERSPEAKEND"]._serialized_start = 1187
+    _globals["_CLIENTUSERSPEAKEND"]._serialized_end = 1230
+    _globals["_CLIENTSETEXPRESSION"]._serialized_start = 1232
+    _globals["_CLIENTSETEXPRESSION"]._serialized_end = 1331
+    _globals["_SERVERERROR"]._serialized_start = 1333
+    _globals["_SERVERERROR"]._serialized_end = 1452
+    _globals["_SERVERRESPONSEMOTION"]._serialized_start = 1455
+    _globals["_SERVERRESPONSEMOTION"]._serialized_end = 1726
+    _globals["_CLIENTINTERRUPT"]._serialized_start = 1728
+    _globals["_CLIENTINTERRUPT"]._serialized_end = 1768
+    _globals["_MESSAGE"]._serialized_start = 1771
+    _globals["_MESSAGE"]._serialized_end = 2646
+    _globals["_TRANSPORTCONFIG"]._serialized_start = 2649
+    _globals["_TRANSPORTCONFIG"]._serialized_end = 2864
+    _globals["_WEBSOCKETTRANSPORTCONFIG"]._serialized_start = 2866
+    _globals["_WEBSOCKETTRANSPORTCONFIG"]._serialized_end = 2892
+    _globals["_LIVEKITTRANSPORTCONFIG"]._serialized_start = 2895
+    _globals["_LIVEKITTRANSPORTCONFIG"]._serialized_end = 3198
+    _globals["_LIVEKITTRANSPORTCONFIG_EXTRAATTRIBUTESENTRY"]._serialized_start = 3132
+    _globals["_LIVEKITTRANSPORTCONFIG_EXTRAATTRIBUTESENTRY"]._serialized_end = 3198
+    _globals["_AGORATRANSPORTCONFIG"]._serialized_start = 3200
+    _globals["_AGORATRANSPORTCONFIG"]._serialized_end = 3297
 # @@protoc_insertion_point(module_scope)

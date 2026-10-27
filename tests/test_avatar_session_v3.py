@@ -1,7 +1,6 @@
 import asyncio
 import importlib.util
 import unittest
-import warnings
 from datetime import datetime, timedelta, timezone
 from typing import Optional, cast
 from unittest.mock import patch
@@ -13,10 +12,12 @@ from websockets.frames import Close
 from websockets.http11 import Response
 
 from spatius import (
+    AgoraTransportConfig,
     AudioFormat,
     AvatarSDKError,
     AvatarSDKErrorCode,
-    LiveKitEgressConfig,
+    Expression,
+    LiveKitTransportConfig,
     OggOpusEncoderConfig,
     SessionTokenError,
     new_avatar_session,
@@ -135,7 +136,7 @@ def _mk_server_error(code: int = 123, message: str = "bad") -> bytes:
     return m.SerializeToString()
 
 
-class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
+class TestAvatarSessionV3(unittest.IsolatedAsyncioTestCase):
     def test_new_avatar_session_defaults_endpoints_from_region(self):
         session = new_avatar_session(region="eu-central")
 
@@ -145,7 +146,7 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             session.config.ingress_endpoint_url,
-            "wss://api.eu-central.spatius.ai/v2/driveningress",
+            "wss://api.eu-central.spatius.ai/v3/driveningress",
         )
 
     def test_new_avatar_session_defaults_cn_endpoints_from_region(self):
@@ -157,14 +158,14 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             session.config.ingress_endpoint_url,
-            "wss://api.cn-beijing.spatialwalk.top/v2/driveningress",
+            "wss://api.cn-beijing.spatialwalk.top/v3/driveningress",
         )
 
     def test_new_avatar_session_explicit_endpoints_override_region(self):
         session = new_avatar_session(
             region="eu-central",
             console_endpoint_url="https://console.example.com/v1/console",
-            ingress_endpoint_url="wss://api.example.com/v2/driveningress",
+            ingress_endpoint_url="wss://api.example.com/v3/driveningress",
         )
 
         self.assertEqual(
@@ -173,7 +174,7 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             session.config.ingress_endpoint_url,
-            "wss://api.example.com/v2/driveningress",
+            "wss://api.example.com/v3/driveningress",
         )
 
     async def test_init_raises_structured_session_token_error(self):
@@ -232,7 +233,9 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
 
         async def fake_connect(url, additional_headers=None, **_kwargs):
             captured["url"] = url
-            captured["headers"] = dict(additional_headers or {})
+            captured["headers"] = dict(
+                additional_headers or _kwargs.get("extra_headers") or {}
+            )
             return _FakeWebSocket(recv_messages=[_mk_confirm("server-conn")])
 
         def fake_create_task(coro):
@@ -271,7 +274,7 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         first = message_pb2.Message()
         first.ParseFromString(fake_ws.sent[0])
         self.assertEqual(first.type, message_pb2.MESSAGE_CLIENT_CONFIGURE_SESSION)
-        self.assertEqual(first.client_configure_session.sample_rate, 16000)
+        self.assertEqual(first.client_configure_session.audio_sample_rate, 16000)
 
         await session.close()
 
@@ -345,7 +348,9 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
 
         async def fake_connect(url, additional_headers=None, **_kwargs):
             captured["url"] = url
-            captured["headers"] = dict(additional_headers or {})
+            captured["headers"] = dict(
+                additional_headers or _kwargs.get("extra_headers") or {}
+            )
             return _FakeWebSocket(recv_messages=[_mk_confirm("server-conn")])
 
         def fake_create_task(coro):
@@ -384,7 +389,7 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
             return _DummyTask()
 
         extra_params = {
-            "server_post_process": "false",
+            "request_label": "example",
             "future_option": "enabled",
         }
         session = new_avatar_session(
@@ -414,7 +419,51 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
 
         await session.close()
 
-    async def test_start_with_livekit_egress_sends_new_fields(self):
+    async def test_start_with_agora_sends_numeric_uid_including_default_zero(self):
+        async def fake_connect(url, additional_headers=None, **_kwargs):
+            return _FakeWebSocket(recv_messages=[_mk_confirm("server-conn")])
+
+        def fake_create_task(coro):
+            coro.close()
+            return _DummyTask()
+
+        for identity in ({}, {"uid": 123}, {"uid": 2**32 - 1}):
+            with self.subTest(identity=identity):
+                session = new_avatar_session(
+                    ingress_endpoint_url="https://ingress.example.com",
+                    console_endpoint_url="https://console.example.com",
+                    api_key="api",
+                    avatar_id="avatar-1",
+                    app_id="app-1",
+                    transport=AgoraTransportConfig(
+                        channel_name="room", token="rtc-token", **identity
+                    ),
+                )
+                session._session_token = "tok-1"
+                with (
+                    patch(
+                        "spatius.avatar_session.websockets.connect", new=fake_connect
+                    ),
+                    patch(
+                        "spatius.avatar_session.asyncio.create_task",
+                        new=fake_create_task,
+                    ),
+                ):
+                    await session.start()
+
+                fake_ws = cast(_FakeWebSocket, session._connection)
+                first = message_pb2.Message.FromString(fake_ws.sent[0])
+                self.assertEqual(
+                    first.client_configure_session.transport.WhichOneof("destination"),
+                    "agora",
+                )
+                config = first.client_configure_session.transport.agora
+                self.assertEqual(config.uid, identity.get("uid", 0))
+                self.assertEqual(config.channel_name, "room")
+                self.assertEqual(config.token, "rtc-token")
+                await session.close()
+
+    async def test_start_with_livekit_transport_sends_new_fields(self):
         async def fake_connect(url, additional_headers=None, **_kwargs):
             return _FakeWebSocket(recv_messages=[_mk_confirm("server-conn")])
 
@@ -428,11 +477,10 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
             api_key="api",
             avatar_id="avatar-1",
             app_id="app-1",
-            livekit_egress=LiveKitEgressConfig(
+            transport=LiveKitTransportConfig(
                 url="wss://livekit.example.com",
-                api_token="lk-token",
-                room_name="lk-room",
-                publisher_id="publisher-1",
+                token="lk-token",
+                agent_identity="source-agent",
                 extra_attributes={"role": "avatar", "region": "us-west"},
                 idle_timeout=120,
             ),
@@ -454,38 +502,21 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(first.type, message_pb2.MESSAGE_CLIENT_CONFIGURE_SESSION)
         self.assertEqual(
-            first.client_configure_session.egress_type, message_pb2.EGRESS_TYPE_LIVEKIT
+            first.client_configure_session.transport.WhichOneof("destination"),
+            "livekit",
         )
         self.assertEqual(
-            first.client_configure_session.livekit_egress.extra_attributes,
+            first.client_configure_session.transport.livekit.extra_attributes,
             {"role": "avatar", "region": "us-west"},
         )
         self.assertEqual(
-            first.client_configure_session.livekit_egress.api_token, "lk-token"
+            first.client_configure_session.transport.livekit.token, "lk-token"
         )
         self.assertEqual(
-            first.client_configure_session.livekit_egress.idle_timeout, 120
+            first.client_configure_session.transport.livekit.idle_timeout, 120
         )
 
         await session.close()
-
-    def test_livekit_egress_legacy_credentials_emit_deprecation_warning(self):
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            config = LiveKitEgressConfig(
-                url="wss://livekit.example.com",
-                api_key="lk-api-key",
-                api_secret="lk-api-secret",
-                room_name="lk-room",
-                publisher_id="publisher-1",
-            )
-
-        self.assertEqual(config.api_key, "lk-api-key")
-        self.assertEqual(config.api_secret, "lk-api-secret")
-        self.assertEqual(len(caught), 1)
-        self.assertIs(caught[0].category, FutureWarning)
-        self.assertIn("deprecated", str(caught[0].message).lower())
-        self.assertIn("api_token", str(caught[0].message))
 
     async def test_start_with_ogg_opus_sends_audio_format(self):
         async def fake_connect(url, additional_headers=None, **_kwargs):
@@ -521,8 +552,7 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         first.ParseFromString(fake_ws.sent[0])
 
         self.assertEqual(first.type, message_pb2.MESSAGE_CLIENT_CONFIGURE_SESSION)
-        self.assertEqual(first.client_configure_session.sample_rate, 24000)
-        self.assertEqual(first.client_configure_session.bitrate, 32000)
+        self.assertEqual(first.client_configure_session.audio_sample_rate, 24000)
         self.assertEqual(
             first.client_configure_session.audio_format,
             message_pb2.AUDIO_FORMAT_OGG_OPUS,
@@ -557,10 +587,11 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
 
         fake_ws: _FakeWebSocket = session._connection  # type: ignore[assignment]
         pre_encoded = b"OggS-pre-encoded"
+        await session.set_expression([Expression("happy", 1.0)])
         req_id = await session.send_audio(pre_encoded, end=True)
 
         audio_msg = message_pb2.Message()
-        audio_msg.ParseFromString(fake_ws.sent[1])
+        audio_msg.ParseFromString(fake_ws.sent[2])
 
         self.assertEqual(audio_msg.client_audio_input.req_id, req_id)
         self.assertEqual(audio_msg.client_audio_input.audio, pre_encoded)
@@ -604,10 +635,11 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
 
         fake_ws: _FakeWebSocket = session._connection  # type: ignore[assignment]
         pcm_frame = b"\x00\x00" * 480
+        await session.set_expression([Expression("happy", 1.0)])
         req_id = await session.send_audio(pcm_frame, end=True)
 
         audio_msg = message_pb2.Message()
-        audio_msg.ParseFromString(fake_ws.sent[1])
+        audio_msg.ParseFromString(fake_ws.sent[2])
 
         self.assertEqual(audio_msg.client_audio_input.req_id, req_id)
         self.assertEqual(audio_msg.client_audio_input.audio[:4], b"OggS")
@@ -650,6 +682,7 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
         ):
             await session.start()
 
+        await session.set_expression([Expression("happy", 1.0)])
         with self.assertLogs("spatius.avatar_session", level="ERROR") as logs:
             await session.send_audio(b"\x00\x00" * 480, end=True)
 
@@ -688,14 +721,15 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
 
         fake_ws: _FakeWebSocket = session._connection  # type: ignore[assignment]
 
+        await session.set_expression([Expression("happy", 0.5)])
         req_id = await session.send_audio(b"\x00\x00" * 100, end=False)
-        self.assertEqual(len(fake_ws.sent), 1)
-
-        await session.send_audio(b"\x00\x00" * 380, end=True)
         self.assertEqual(len(fake_ws.sent), 2)
 
+        await session.send_audio(b"\x00\x00" * 380, end=True)
+        self.assertEqual(len(fake_ws.sent), 3)
+
         audio_msg = message_pb2.Message()
-        audio_msg.ParseFromString(fake_ws.sent[1])
+        audio_msg.ParseFromString(fake_ws.sent[2])
 
         self.assertEqual(audio_msg.client_audio_input.req_id, req_id)
         self.assertEqual(audio_msg.client_audio_input.audio[:4], b"OggS")
@@ -703,29 +737,208 @@ class TestAvatarSessionV2(unittest.IsolatedAsyncioTestCase):
 
         await session.close()
 
-    async def test_handle_server_response_animation_end_flag(self):
+    async def test_motion_callback_preserves_complete_binary_envelope(self):
         got: list[tuple[bytes, bool]] = []
-
         session = new_avatar_session(
-            ingress_endpoint_url="https://ingress.example.com",
-            console_endpoint_url="https://console.example.com",
-            api_key="api",
-            avatar_id="avatar-1",
-            app_id="app-1",
+            region="us-west",
             transport_frames=lambda data, last: got.append((bytes(data), bool(last))),
         )
+        motion = message_pb2.ServerResponseMotion(
+            connection_id="cid",
+            req_id="rid",
+            avatar_id="avatar-1",
+            emotion="happy",
+            trace_context=message_pb2.TraceContext(
+                traceparent="00-1234567890abcdef1234567890abcdef-1234567890abcdef-01",
+                tracestate="vendor=value",
+            ),
+            animation=message_pb2.MotionAnimation(
+                keyframes=[
+                    message_pb2.MotionFrame(
+                        expr=[0.25, 0.5],
+                        body_pose=[0.0, 0.25, -0.5],
+                        jaw_pose=[0.25, 0.0, 0.0],
+                        eyelid=[0.25, 0.5],
+                        leye_pose=[0.0, -0.25, 0.0],
+                        reye_pose=[0.0, 0.25, 0.0],
+                        emotion_weights=[0.25, 0.75],
+                    )
+                ]
+            ),
+        )
+        envelope = message_pb2.Message(
+            type=message_pb2.MESSAGE_SERVER_RESPONSE_MOTION,
+            server_response_motion=motion,
+        )
+        first_payload = envelope.SerializeToString()
+        await session._handle_binary_message(first_payload)
+        envelope.server_response_motion.end = True
+        final_payload = envelope.SerializeToString()
+        await session._handle_binary_message(final_payload)
 
-        m = message_pb2.Message()
-        m.type = message_pb2.MESSAGE_SERVER_RESPONSE_ANIMATION
-        m.server_response_animation.connection_id = "cid"
-        m.server_response_animation.req_id = "rid"
-        m.server_response_animation.end = True
+        self.assertEqual(got, [(first_payload, False), (final_payload, True)])
+        decoded = message_pb2.Message.FromString(got[-1][0])
+        self.assertEqual(decoded, envelope)
+        self.assertEqual(
+            list(decoded.server_response_motion.animation.keyframes[0].emotion_weights),
+            [0.25, 0.75],
+        )
 
-        payload = m.SerializeToString()
-        await session._handle_binary_message(payload)
+    async def test_motion_type_without_motion_payload_is_protocol_error(self):
+        errors = []
+        frames = []
+        session = new_avatar_session(
+            region="us-west",
+            on_error=errors.append,
+            transport_frames=lambda data, end: frames.append((data, end)),
+        )
+        await session._handle_binary_message(
+            message_pb2.Message(
+                type=message_pb2.MESSAGE_SERVER_RESPONSE_MOTION,
+                server_error=message_pb2.ServerError(message="wrong payload"),
+            ).SerializeToString()
+        )
+        self.assertEqual(frames, [])
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0].code, AvatarSDKErrorCode.protocolError)
 
-        self.assertEqual(len(got), 1)
-        self.assertTrue(got[0][1])
+    async def test_user_turn_events_share_one_req_id_in_order(self):
+        session = new_avatar_session(region="us-west")
+        connection = _FakeWebSocket()
+        session._connection = connection
+        try:
+            req_id = await session.user_speak_start()
+            self.assertEqual(await session.user_speak_end(), req_id)
+            self.assertEqual(
+                await session.set_expression(
+                    [Expression("happy", 0.0), Expression("sad", 0.5)]
+                ),
+                req_id,
+            )
+            self.assertEqual(await session.send_audio(b"first"), req_id)
+            self.assertEqual(await session.send_audio(b"", end=True), req_id)
+            messages = [
+                message_pb2.Message.FromString(data) for data in connection.sent
+            ]
+            self.assertEqual(
+                [(msg.type, msg.WhichOneof("data")) for msg in messages],
+                [
+                    (7, "client_user_speak_start"),
+                    (9, "client_user_speak_end"),
+                    (10, "client_set_expression"),
+                    (3, "client_audio_input"),
+                    (3, "client_audio_input"),
+                ],
+            )
+            self.assertTrue(
+                all(
+                    getattr(msg, msg.WhichOneof("data")).req_id == req_id
+                    for msg in messages
+                )
+            )
+            expressions = messages[2].client_set_expression.expressions
+            self.assertEqual(
+                [(e.label, e.strength) for e in expressions],
+                [("happy", 0.0), ("sad", 0.5)],
+            )
+            self.assertEqual(
+                [m.client_audio_input.end for m in messages[3:]], [False, True]
+            )
+        finally:
+            await session.close()
+
+    async def test_set_expression_opens_a_turn_without_user_speech_and_each_reply_needs_one(
+        self,
+    ):
+        session = new_avatar_session(region="us-west")
+        connection = _FakeWebSocket()
+        session._connection = connection
+        try:
+            greeting = await session.set_expression([Expression("happy", 1.0)])
+            self.assertEqual(await session.send_audio(b"hello", end=True), greeting)
+            with self.assertRaises(ValueError):
+                await session.send_audio(b"no expression")
+            answer = await session.set_expression([Expression("neutral", 1.0)])
+            self.assertNotEqual(answer, greeting)
+            self.assertEqual(await session.send_audio(b"answer", end=True), answer)
+            self.assertEqual(len(connection.sent), 4)
+        finally:
+            await session.close()
+
+    async def test_out_of_order_events_and_invalid_expressions_raise_without_sending(
+        self,
+    ):
+        session = new_avatar_session(region="us-west")
+        connection = _FakeWebSocket()
+        session._connection = connection
+        try:
+            with self.assertRaises(ValueError):
+                await session.user_speak_end()
+            with self.assertRaises(ValueError):
+                await session.send_audio(b"no turn")
+            await session.user_speak_start()
+            with self.assertRaises(ValueError):
+                await session.set_expression([Expression("happy", 1.0)])
+            await session.user_speak_end()
+            for invalid in (
+                [],
+                [Expression("happy", 1.0), Expression("happy", 0.5)],
+                "happy",
+            ):
+                with self.subTest(expressions=invalid):
+                    with self.assertRaises(ValueError):
+                        await session.set_expression(invalid)  # type: ignore[arg-type]
+            await session.set_expression([Expression("happy", 1.0)])
+            with self.assertRaises(ValueError):
+                await session.set_expression([Expression("sad", 1.0)])
+            self.assertEqual(len(connection.sent), 3)
+        finally:
+            await session.close()
+
+    def test_expression_validates_label_and_strength(self):
+        self.assertEqual(Expression("happy", 0).strength, 0.0)
+        self.assertAlmostEqual(Expression("happy", 0.1).strength, 0.1, places=6)
+        for label, strength in (
+            ("", 0.5),
+            ("happy", -0.01),
+            ("happy", 1.01),
+            ("happy", float("nan")),
+            ("happy", True),
+        ):
+            with self.subTest(label=label, strength=strength):
+                with self.assertRaises(ValueError):
+                    Expression(label, strength)
+
+    async def test_interrupt_targets_the_latest_turn_and_the_next_reply_needs_an_expression(
+        self,
+    ):
+        session = new_avatar_session(region="us-west")
+        connection = _FakeWebSocket()
+        session._connection = connection
+        try:
+            req_id = await session.set_expression([Expression("happy", 1.0)])
+            await session.send_audio(b"first")
+            self.assertEqual(await session.interrupt(), req_id)
+            interrupt = message_pb2.Message.FromString(connection.sent[-1])
+            self.assertEqual(interrupt.type, message_pb2.MESSAGE_CLIENT_INTERRUPT)
+            self.assertEqual(interrupt.client_interrupt.req_id, req_id)
+            with self.assertRaises(ValueError):
+                await session.send_audio(b"stale")
+            self.assertNotEqual(
+                await session.set_expression([Expression("sad", 1.0)]), req_id
+            )
+        finally:
+            await session.close()
+
+    async def test_close_clears_the_turn(self):
+        session = new_avatar_session(region="us-west")
+        connection = _FakeWebSocket()
+        session._connection = connection
+        await session.set_expression([Expression("happy", 0.5)])
+        await session.close()
+        self.assertTrue(connection._closed)
+        self.assertIsNone(session._turn_req_id)
+        self.assertIsNone(session._turn_phase)
 
     async def test_start_raises_on_server_error_during_handshake(self):
         async def fake_connect(url, additional_headers=None, **_kwargs):
