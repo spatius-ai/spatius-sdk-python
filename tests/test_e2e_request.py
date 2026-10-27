@@ -7,6 +7,7 @@ from pathlib import Path
 
 from spatius import (
     AudioFormat,
+    Expression,
     OggOpusEncoderConfig,
     SessionTokenError,
     new_avatar_session,
@@ -114,8 +115,7 @@ class TestE2ERequest(unittest.IsolatedAsyncioTestCase):
         chunk_size = int(os.getenv("SPATIUS_E2E_CHUNK_SIZE", "4096"))
         self.assertGreater(chunk_size, 0)
         emotion = os.getenv("SPATIUS_E2E_EMOTION")
-        strength_value = os.getenv("SPATIUS_E2E_STRENGTH")
-        strength = float(strength_value) if strength_value is not None else None
+        strength = float(os.getenv("SPATIUS_E2E_STRENGTH", "1"))
         weights_value = os.getenv("SPATIUS_E2E_EXPECTED_EMOTION_WEIGHTS", "")
         expected_weights = (
             [float(value) for value in weights_value.split(",")]
@@ -161,21 +161,23 @@ class TestE2ERequest(unittest.IsolatedAsyncioTestCase):
 
         try:
             await session.init()
+            detail = await session.get_avatar_detail()
             await session.start()
         except SessionTokenError as exc:
             raise AssertionError(
                 "Expected valid e2e credentials, but session token creation failed"
             ) from exc
 
+        label = emotion or detail.default_emotion
         try:
-            req_id = await self._send_audio_for_format(
-                session,
-                audio_bytes,
-                audio_format,
-                chunk_size,
-                emotion,
-                strength,
+            # a full user turn: speech boundaries, then the reply's expression and audio
+            req_id = await session.user_speak_start()
+            await session.user_speak_end()
+            await session.set_expression([Expression(label, strength)])
+            sent_id = await self._send_audio_for_format(
+                session, audio_bytes, audio_format, chunk_size
             )
+            self.assertEqual(sent_id, req_id)
             await collector.wait(timeout=timeout_seconds)
         finally:
             await session.close()
@@ -188,8 +190,14 @@ class TestE2ERequest(unittest.IsolatedAsyncioTestCase):
             for frame in envelope.server_response_motion.animation.keyframes
         ]
         self.assertGreater(len(keyframes), 0)
-        self.assertTrue(all(frame.expr for frame in keyframes))
-        self.assertTrue(all(frame.emotion_weights for frame in keyframes))
+        # private avatars carry the 712-byte field 8 and leave fields 1-6 empty
+        self.assertTrue(all(len(frame.pbx) == 712 or frame.expr for frame in keyframes))
+        self.assertTrue(
+            all(
+                len(frame.emotion_weights) == len(detail.available_emotions)
+                for frame in keyframes
+            )
+        )
         for envelope, is_last in collector.frames:
             self.assertEqual(envelope.type, message_pb2.MESSAGE_SERVER_RESPONSE_MOTION)
             motion = envelope.server_response_motion
@@ -197,8 +205,7 @@ class TestE2ERequest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(motion.avatar_id, env["SPATIUS_E2E_AVATAR_ID"])
             self.assertTrue(motion.connection_id)
             self.assertEqual(motion.end, is_last)
-            if emotion:
-                self.assertEqual(motion.emotion, emotion)
+            self.assertEqual(motion.emotion, label)
         for frame in keyframes:
             for channel in (
                 frame.expr,
@@ -228,8 +235,6 @@ class TestE2ERequest(unittest.IsolatedAsyncioTestCase):
         audio_bytes: bytes,
         audio_format: AudioFormat,
         chunk_size: int,
-        emotion: str | None,
-        strength: float | None,
     ) -> str:
         req_id = ""
         for offset in range(0, len(audio_bytes), chunk_size):
@@ -239,16 +244,9 @@ class TestE2ERequest(unittest.IsolatedAsyncioTestCase):
                     audio_format == AudioFormat.PCM_S16LE
                     and offset + chunk_size >= len(audio_bytes)
                 ),
-                emotion=emotion if offset == 0 else None,
-                strength=strength if offset == 0 else None,
             )
         if audio_format == AudioFormat.OGG_OPUS or not audio_bytes:
-            return await session.send_audio(
-                b"",
-                end=True,
-                emotion=emotion if not audio_bytes else None,
-                strength=strength if not audio_bytes else None,
-            )
+            return await session.send_audio(b"", end=True)
         return req_id
 
 

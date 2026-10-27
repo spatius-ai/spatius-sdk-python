@@ -8,6 +8,7 @@ from opentelemetry.sdk.trace.export import SpanExportResult
 
 import spatius.telemetry as telemetry
 from spatius import (
+    Expression,
     AvatarSession,
     SessionConfig,
     configure_telemetry,
@@ -188,7 +189,7 @@ class TestTracePropagation(unittest.IsolatedAsyncioTestCase):
         shutdown_telemetry()
         configure_telemetry("")
 
-    async def test_handshake_contains_trace_context_and_audio_contains_emotion(self):
+    async def test_handshake_carries_trace_context_and_audio_does_not(self):
         span_exporter = _SpanExporter()
         metric_exporter = _MetricExporter()
         configure_telemetry("https://collector.example.com")
@@ -214,10 +215,11 @@ class TestTracePropagation(unittest.IsolatedAsyncioTestCase):
             with patch("spatius.avatar_session.websockets.connect", new=fake_connect):
                 await session.start()
 
-            req_id = await session.send_audio(b"first", end=False, emotion="happy")
+            await session.set_expression([Expression("happy", 1.0)])
+            req_id = await session.send_audio(b"first", end=False)
             await session.send_audio(b"second", end=True)
 
-            config, first, second = [
+            config, _expression, first, second = [
                 message_pb2.Message.FromString(payload) for payload in connection.sent
             ]
             traceparent = config.client_configure_session.trace_context.traceparent
@@ -228,8 +230,10 @@ class TestTracePropagation(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn(
                 "trace_context", first.client_audio_input.DESCRIPTOR.fields_by_name
             )
-            self.assertEqual(first.client_audio_input.emotion, "happy")
-            self.assertEqual(second.client_audio_input.emotion, "happy")
+            self.assertEqual(
+                [first.client_audio_input.req_id, second.client_audio_input.req_id],
+                [req_id, req_id],
+            )
 
             response = message_pb2.Message()
             response.type = message_pb2.MESSAGE_SERVER_RESPONSE_MOTION

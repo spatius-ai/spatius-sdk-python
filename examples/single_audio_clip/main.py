@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from spatius import (
+    Expression,
     AudioFormat,
     OggOpusEncoderConfig,
     SessionTokenError,
@@ -141,6 +142,10 @@ async def main():
         print("Starting WebSocket connection...")
         connection_id = await session.start()
         print(f"Connected with connection ID: {connection_id}")
+
+        # Each reply opens a turn with its expression; use the avatar's default
+        detail = await session.get_avatar_detail()
+        await session.set_expression([Expression(detail.default_emotion, 1.0)])
 
         # Send audio
         print("Sending audio...")

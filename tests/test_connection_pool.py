@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from unittest.mock import patch
 
+from spatius import AvatarDetail
 from spatius.proto.generated import message_pb2
 
 
@@ -508,6 +509,9 @@ class TestConcurrentAudioProcessing(unittest.IsolatedAsyncioTestCase):
             session_ttl_minutes=5,
         )
 
+        async def fake_avatar_detail(self):
+            return AvatarDetail(("neutral", "happy"), "neutral")
+
         with (
             patch("spatius.avatar_session.websockets.connect", new=fake_connect),
             patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
@@ -526,7 +530,11 @@ class TestConcurrentAudioProcessing(unittest.IsolatedAsyncioTestCase):
         frame_task = asyncio.create_task(send_frames())
 
         audio = b"test audio data"
-        result = await process_audio_request(pool, audio, 0)
+        with patch(
+            "spatius.avatar_session.AvatarSession.get_avatar_detail",
+            new=fake_avatar_detail,
+        ):
+            result = await process_audio_request(pool, audio, 0)
 
         await frame_task
 

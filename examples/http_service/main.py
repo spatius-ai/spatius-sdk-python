@@ -29,7 +29,7 @@ from typing import Any, Optional
 
 from aiohttp import web
 
-from spatius import AvatarSDKError, SessionTokenError, new_avatar_session
+from spatius import AvatarSDKError, Expression, SessionTokenError, new_avatar_session
 
 _AUDIO_RE = re.compile(r"^audio_(?P<rate>\d+)\.pcm$")
 
@@ -149,6 +149,9 @@ async def handle_generate(request: web.Request) -> web.Response:
     try:
         await session.init()
         connection_id = await session.start()
+        # each reply opens a turn with its expression; use the avatar's default
+        detail = await session.get_avatar_detail()
+        await session.set_expression([Expression(detail.default_emotion, 1.0)])
         req_id = await session.send_audio(audio, end=True)
 
         import asyncio

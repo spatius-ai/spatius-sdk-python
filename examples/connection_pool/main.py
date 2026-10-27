@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
-from spatius import AvatarSession, SessionTokenError, new_avatar_session
+from spatius import AvatarSession, Expression, SessionTokenError, new_avatar_session
 
 # Configuration
 POOL_SIZE = 100  # Number of connections to maintain
@@ -204,6 +204,7 @@ class AvatarConnectionPool:
 
         Usage:
             async with pool.borrow() as conn:
+                await conn.session.set_expression([Expression("neutral", 1.0)])
                 await conn.session.send_audio(audio, end=True)
                 await conn.collector.wait()
 
@@ -307,6 +308,10 @@ async def process_audio_request(
 
     try:
         async with pool.borrow() as conn:
+            # Each reply opens a turn with its expression; use the avatar's
+            # default (fetched once per session, then cached)
+            detail = await conn.session.get_avatar_detail()
+            await conn.session.set_expression([Expression(detail.default_emotion, 1.0)])
             # Send audio
             request_id = await conn.session.send_audio(audio, end=True)
 

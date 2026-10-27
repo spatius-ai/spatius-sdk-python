@@ -5,6 +5,7 @@ from importlib.metadata import PackageNotFoundError, version
 from .avatar_detail import AvatarDetail
 from .avatar_session import AvatarSession
 from .errors import AvatarSDKError, AvatarSDKErrorCode, SessionTokenError
+from .expression import Expression
 from .session_config import (
     AudioFormat,
     OggOpusEncoderConfig,
@@ -30,6 +31,7 @@ except PackageNotFoundError:  # pragma: no cover - only when imported without in
 __all__ = [
     "AvatarSession",
     "AvatarDetail",
+    "Expression",
     "SessionTokenError",
     "AvatarSDKError",
     "AvatarSDKErrorCode",

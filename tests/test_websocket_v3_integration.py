@@ -3,7 +3,7 @@ import unittest
 
 from aiohttp import WSMsgType, web
 
-from spatius import new_avatar_session
+from spatius import Expression, new_avatar_session
 from spatius.proto.generated import message_pb2
 
 
@@ -15,6 +15,8 @@ class TestLocalV3WebSocket(unittest.IsolatedAsyncioTestCase):
         detail_requests = []
         frames = []
         errors = []
+        sent_motion = []
+        expressions = {}
         completed = asyncio.Event()
         interrupted = asyncio.get_running_loop().create_future()
 
@@ -62,44 +64,42 @@ class TestLocalV3WebSocket(unittest.IsolatedAsyncioTestCase):
                             ),
                         ).SerializeToString()
                     )
+                elif envelope.type == message_pb2.MESSAGE_CLIENT_SET_EXPRESSION:
+                    event = envelope.client_set_expression
+                    expressions[event.req_id] = event.expressions[0].label
                 elif (
                     envelope.type == message_pb2.MESSAGE_CLIENT_AUDIO_INPUT
                     and envelope.client_audio_input.end
                 ):
                     audio = envelope.client_audio_input
                     for end in (False, True):
-                        await ws.send_bytes(
-                            message_pb2.Message(
-                                type=message_pb2.MESSAGE_SERVER_RESPONSE_MOTION,
-                                server_response_motion=message_pb2.ServerResponseMotion(
-                                    connection_id="local-connection",
-                                    req_id=audio.req_id,
-                                    avatar_id="local-avatar",
-                                    emotion=audio.emotion,
-                                    end=end,
-                                    animation=message_pb2.MotionAnimation(
-                                        keyframes=[
-                                            message_pb2.MotionFrame(
-                                                expr=[0.25, 0.5],
-                                                body_pose=[0.0, -0.25, 0.0],
-                                                jaw_pose=[0.25, 0.0, 0.0],
-                                                eyelid=[0.25, 0.5],
-                                                leye_pose=[0.0, 0.25, 0.0],
-                                                reye_pose=[0.0, -0.25, 0.0],
-                                                emotion_weights=[0.25, 0.75],
-                                            )
-                                        ],
-                                    ),
+                        payload = message_pb2.Message(
+                            type=message_pb2.MESSAGE_SERVER_RESPONSE_MOTION,
+                            server_response_motion=message_pb2.ServerResponseMotion(
+                                connection_id="local-connection",
+                                req_id=audio.req_id,
+                                avatar_id="local-avatar",
+                                emotion=expressions[audio.req_id],
+                                end=end,
+                                animation=message_pb2.MotionAnimation(
+                                    keyframes=[
+                                        message_pb2.MotionFrame(
+                                            emotion_weights=[0.25, 0.75],
+                                            pbx=bytes(range(256)) * 2 + bytes(200),
+                                        )
+                                    ],
                                 ),
-                            ).SerializeToString()
-                        )
+                            ),
+                        ).SerializeToString()
+                        sent_motion.append(payload)
+                        await ws.send_bytes(payload)
                 elif envelope.type == message_pb2.MESSAGE_CLIENT_INTERRUPT:
                     if not interrupted.done():
                         interrupted.set_result(envelope)
             return ws
 
         def on_frame(payload, end):
-            frames.append((message_pb2.Message.FromString(payload), end))
+            frames.append((bytes(payload), end))
             if end:
                 completed.set()
 
@@ -131,21 +131,28 @@ class TestLocalV3WebSocket(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(detail.default_emotion, "neutral")
             self.assertIs(await session.get_avatar_detail(), detail)
             self.assertEqual(await session.start(), "local-connection")
-            req_id = await session.send_audio(
-                b"\x01\x00" * 160, emotion="happy", strength=0.5
+            # a user turn: speech, then the reply's expression and audio
+            req_id = await session.user_speak_start()
+            self.assertEqual(await session.user_speak_end(), req_id)
+            self.assertEqual(
+                await session.set_expression([Expression("happy", 0.5)]), req_id
             )
+            self.assertEqual(await session.send_audio(b"\x01\x00" * 160), req_id)
             self.assertEqual(await session.send_audio(b"\x02\x00" * 160), req_id)
             self.assertEqual(await session.send_audio(b"", end=True), req_id)
             await asyncio.wait_for(completed.wait(), timeout=5)
-            next_id = await session.send_audio(
-                b"\x03\x00" * 160, emotion="sad", strength=0.0
-            )
+            # a reply without user speech opens its own turn, then is interrupted
+            next_id = await session.set_expression([Expression("sad", 0.0)])
             self.assertNotEqual(next_id, req_id)
+            await session.send_audio(b"\x03\x00" * 160)
             self.assertEqual(await session.interrupt(), next_id)
             interrupt = await asyncio.wait_for(interrupted, timeout=5)
             completed.clear()
-            default_id = await session.send_audio(b"\x04\x00" * 160, end=True)
-            self.assertNotEqual(default_id, next_id)
+            last_id = await session.set_expression([Expression("neutral", 1.0)])
+            self.assertNotEqual(last_id, next_id)
+            self.assertEqual(
+                await session.send_audio(b"\x04\x00" * 160, end=True), last_id
+            )
             await asyncio.wait_for(completed.wait(), timeout=5)
         finally:
             await session.close()
@@ -172,42 +179,62 @@ class TestLocalV3WebSocket(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(config.audio_sample_rate, 16000)
         self.assertEqual(config.audio_format, message_pb2.AUDIO_FORMAT_PCM_S16LE)
         self.assertIn(config.transport.WhichOneof("destination"), (None, "websocket"))
+        turn_events = [
+            (packet.type, getattr(packet, packet.WhichOneof("data")).req_id)
+            for packet in received[1:]
+        ]
+        self.assertEqual(
+            turn_events,
+            [
+                (message_pb2.MESSAGE_CLIENT_USER_SPEAK_START, req_id),
+                (message_pb2.MESSAGE_CLIENT_USER_SPEAK_END, req_id),
+                (message_pb2.MESSAGE_CLIENT_SET_EXPRESSION, req_id),
+                *[(message_pb2.MESSAGE_CLIENT_AUDIO_INPUT, req_id)] * 3,
+                (message_pb2.MESSAGE_CLIENT_SET_EXPRESSION, next_id),
+                (message_pb2.MESSAGE_CLIENT_AUDIO_INPUT, next_id),
+                (message_pb2.MESSAGE_CLIENT_INTERRUPT, next_id),
+                (message_pb2.MESSAGE_CLIENT_SET_EXPRESSION, last_id),
+                (message_pb2.MESSAGE_CLIENT_AUDIO_INPUT, last_id),
+            ],
+        )
+        selections = [
+            [(e.label, e.strength) for e in packet.client_set_expression.expressions]
+            for packet in received
+            if packet.type == message_pb2.MESSAGE_CLIENT_SET_EXPRESSION
+        ]
+        self.assertEqual(
+            selections, [[("happy", 0.5)], [("sad", 0.0)], [("neutral", 1.0)]]
+        )
         audio = [
             packet.client_audio_input
             for packet in received
             if packet.type == message_pb2.MESSAGE_CLIENT_AUDIO_INPUT
         ]
-        self.assertEqual([packet.req_id for packet in audio[:3]], [req_id] * 3)
-        self.assertEqual(
-            [packet.emotion for packet in audio], ["happy"] * 3 + ["sad", ""]
-        )
         self.assertEqual(
             [packet.end for packet in audio], [False, False, True, False, True]
-        )
-        self.assertEqual(
-            [packet.HasField("strength") for packet in audio],
-            [True, True, True, True, False],
-        )
-        self.assertEqual(
-            [packet.strength for packet in audio[:4]], [0.5, 0.5, 0.5, 0.0]
         )
         self.assertEqual(
             b"".join(packet.audio for packet in audio[:3]),
             b"\x01\x00" * 160 + b"\x02\x00" * 160,
         )
-        self.assertEqual([end for _, end in frames], [False, True, False, True])
-        for index, (envelope, end) in enumerate(frames):
-            motion = envelope.server_response_motion
-            self.assertEqual(envelope.type, message_pb2.MESSAGE_SERVER_RESPONSE_MOTION)
-            self.assertEqual(motion.req_id, req_id if index < 2 else default_id)
-            self.assertEqual(motion.connection_id, "local-connection")
-            self.assertEqual(motion.avatar_id, "local-avatar")
-            self.assertEqual(motion.emotion, "happy" if index < 2 else "")
-            self.assertEqual(motion.end, end)
-            self.assertEqual(
-                list(motion.animation.keyframes[0].emotion_weights), [0.25, 0.75]
-            )
-            self.assertEqual(list(motion.animation.keyframes[0].eyelid), [0.25, 0.5])
+        # motion reaches the callback as the exact envelope the service sent,
+        # including the 712-byte field 8
+        self.assertEqual(
+            frames,
+            [
+                (sent_motion[0], False),
+                (sent_motion[1], True),
+                (sent_motion[2], False),
+                (sent_motion[3], True),
+            ],
+        )
+        last_motion = message_pb2.Message.FromString(
+            frames[-1][0]
+        ).server_response_motion
+        self.assertEqual(
+            (last_motion.req_id, last_motion.emotion), (last_id, "neutral")
+        )
+        self.assertEqual(len(last_motion.animation.keyframes[0].pbx), 712)
         self.assertEqual(interrupt.type, 6)
         self.assertEqual(interrupt.client_interrupt.req_id, next_id)
         self.assertEqual(errors, [])

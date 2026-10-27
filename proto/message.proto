@@ -10,6 +10,10 @@ enum MessageType {
   MESSAGE_SERVER_ERROR = 4;
   MESSAGE_SERVER_RESPONSE_MOTION = 5;
   MESSAGE_CLIENT_INTERRUPT = 6;
+  MESSAGE_CLIENT_USER_SPEAK_START = 7;
+  MESSAGE_CLIENT_TRIGGER_REACTION = 8;
+  MESSAGE_CLIENT_USER_SPEAK_END = 9;
+  MESSAGE_CLIENT_SET_EXPRESSION = 10;
 }
 
 enum AudioFormat {
@@ -25,6 +29,7 @@ message MotionFrame {
   repeated float leye_pose = 5 [packed = true];
   repeated float reye_pose = 6 [packed = true];
   repeated float emotion_weights = 7 [packed = true];
+  bytes pbx = 8;
 }
 
 message MotionAnimation {
@@ -52,9 +57,29 @@ message ClientAudioInput {
   string req_id = 1;
   bool end = 2;
   bytes audio = 3;
+}
 
-  string emotion = 4;
-  optional float strength = 5;
+message ClientUserSpeakStart {
+  string req_id = 1;
+}
+
+message Expression {
+  string label = 1;
+  float strength = 2;
+}
+
+message ClientTriggerReaction {
+  string req_id = 1;
+  repeated Expression reactions = 2;
+}
+
+message ClientUserSpeakEnd {
+  string req_id = 1;
+}
+
+message ClientSetExpression {
+  string req_id = 1;
+  repeated Expression expressions = 2;
 }
 
 message ServerError {
@@ -87,6 +112,10 @@ message Message {
     ServerError server_error = 5;
     ServerResponseMotion server_response_motion = 6;
     ClientInterrupt client_interrupt = 7;
+    ClientUserSpeakStart client_user_speak_start = 8;
+    ClientTriggerReaction client_trigger_reaction = 9;
+    ClientUserSpeakEnd client_user_speak_end = 10;
+    ClientSetExpression client_set_expression = 11;
   }
 }
 
