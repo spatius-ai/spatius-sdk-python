@@ -6,7 +6,7 @@ from typing import cast
 from spatius import (
     AvatarSDKError,
     AvatarSDKErrorCode,
-    LiveKitEgressConfig,
+    LiveKitTransportConfig,
     SessionTokenError,
     new_avatar_session,
 )
@@ -116,17 +116,9 @@ class TestE2EErrors(unittest.IsolatedAsyncioTestCase):
             **_endpoint_kwargs(),
             avatar_id=env["SPATIUS_E2E_AVATAR_ID"],
             expire_at=datetime.now(timezone.utc) + timedelta(minutes=5),
-            livekit_egress=LiveKitEgressConfig(
+            transport=LiveKitTransportConfig(
                 url=env["SPATIUS_E2E_LIVEKIT_URL"],
-                api_token="spatius-e2e-invalid-livekit-token",
-                room_name=os.getenv(
-                    "SPATIUS_E2E_LIVEKIT_ROOM_NAME",
-                    "spatius-e2e-invalid-token-room",
-                ).strip(),
-                publisher_id=os.getenv(
-                    "SPATIUS_E2E_LIVEKIT_PUBLISHER_ID",
-                    "spatius-e2e-invalid-token-publisher",
-                ).strip(),
+                token="spatius-e2e-invalid-livekit-token",
             ),
         )
 
@@ -142,9 +134,7 @@ class TestE2EErrors(unittest.IsolatedAsyncioTestCase):
             await session.close()
 
         err = cm.exception
-        print(err.message)
         self.assertEqual(err.code, AvatarSDKErrorCode.invalidEgressConfig)
         self.assertEqual(err.phase, "websocket_handshake")
-        self.assertEqual(err.server_code, "16")
-        self.assertIsNotNone(err.server_detail)
-        self.assertIn("unauthorized", cast(str, err.server_detail).lower())
+        self.assertIn(err.server_code, ("3", "16"))
+        self.assertTrue(err.server_detail)

@@ -38,7 +38,7 @@ class TestLiveTelemetryProxy(unittest.IsolatedAsyncioTestCase):
                     avatar_id="telemetry-smoke-test",
                     region="us-west",
                     console_endpoint_url="https://console.example.com/v1/console",
-                    ingress_endpoint_url="wss://api.example.com/v2/driveningress",
+                    ingress_endpoint_url="wss://api.example.com/v3/driveningress",
                 )
             )
             session._connection = FakeConnection()
@@ -46,9 +46,9 @@ class TestLiveTelemetryProxy(unittest.IsolatedAsyncioTestCase):
             req_id = await session.send_audio(b"\x00\x00" * 160, end=True)
 
             response = message_pb2.Message()
-            response.type = message_pb2.MESSAGE_SERVER_RESPONSE_ANIMATION
-            response.server_response_animation.req_id = req_id
-            response.server_response_animation.end = True
+            response.type = message_pb2.MESSAGE_SERVER_RESPONSE_MOTION
+            response.server_response_motion.req_id = req_id
+            response.server_response_motion.end = True
             await session._handle_binary_message(response.SerializeToString())
             await session.close()
         finally:
