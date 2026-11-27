@@ -21,7 +21,7 @@ class TestHostPortForUrl(unittest.TestCase):
 
     def test_wss_url(self):
         self.assertEqual(
-            host_port_for_url("wss://api.us-west.spatius.ai/v2/driveningress"),
+            host_port_for_url("wss://api.us-west.spatius.ai/v3/driveningress"),
             ("api.us-west.spatius.ai", 443),
         )
 

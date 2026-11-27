@@ -246,7 +246,7 @@ def add_span_event(
 
 
 def inject_trace_context(span: Optional[Span]) -> dict[str, str]:
-    """Return W3C trace context for a first audio message."""
+    """Return W3C trace context for the session handshake."""
     if span is None:
         return {}
     try:

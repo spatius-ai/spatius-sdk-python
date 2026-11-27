@@ -1,10 +1,12 @@
 """Main AvatarSession implementation for managing avatar websocket sessions."""
 
 import asyncio
+import enum
 import inspect
 import json
 import logging
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
@@ -13,17 +15,22 @@ import aiohttp
 import websockets
 
 from .audio_encoder import OggOpusStreamEncoder
+from .avatar_detail import AvatarDetail, fetch_avatar_detail
 from .bootstrap import resolve_region_with_cache_info
 from .errors import AvatarSDKError, AvatarSDKErrorCode, SessionTokenError
+from .expression import Expression, validate_expressions
 from .logid import generate_log_id
 from .net import SESSION_TOKEN_TIMEOUT_S, get_ssl_context, new_connector
 from .proto.generated import message_pb2
 from .session_config import (
     DEFAULT_REGION,
     DEFAULT_REGION_REQUEST,
+    AgoraTransportConfig,
     AudioFormat,
+    LiveKitTransportConfig,
     OggOpusEncoderConfig,
     SessionConfig,
+    WebSocketTransportConfig,
 )
 from .token_cache import get_cached_session_token
 from .telemetry import (
@@ -45,6 +52,16 @@ INGRESS_WEBSOCKET_PATH = "/websocket"
 HANDSHAKE_TIMEOUT_S = 10.0
 
 logger = logging.getLogger(__name__)
+
+
+class _TurnPhase(enum.Enum):
+    """Where the current conversation turn is; mirrors the ingress ordering rules."""
+
+    LISTENING = "listening"  # user_speak_start sent
+    AWAITING_EXPRESSION = "awaiting_expression"  # user_speak_end sent
+    READY = "ready"  # set_expression sent, no audio yet
+    SPEAKING = "speaking"  # audio sent, input not ended
+    FINISHED = "finished"  # audio input ended or the turn was interrupted
 
 
 def _detect_headers_kwarg() -> str:
@@ -228,7 +245,7 @@ class AvatarSession:
     3. Call ``start()`` to open the ingress WebSocket and perform the protocol
        handshake.
     4. Call ``send_audio()`` one or more times.
-    5. Receive animation frames through the configured ``transport_frames`` callback.
+    5. Receive motion messages through the configured ``transport_frames`` callback.
     6. Call ``close()`` when finished.
 
     The session is also an async context manager; ``async with`` runs ``init()``
@@ -249,11 +266,12 @@ class AvatarSession:
         """
         self._config = config
         self._session_token: Optional[str] = None
+        self._avatar_detail: Optional[AvatarDetail] = None
+        self._avatar_detail_lock = asyncio.Lock()
         self._connection: Optional[Any] = None
-        self._current_req_id: Optional[str] = None
-        self._last_req_id: Optional[str] = (
-            None  # tracks most recent request for interrupt
-        )
+        # Every event and audio packet of a conversation turn shares its req_id.
+        self._turn_req_id: Optional[str] = None
+        self._turn_phase: Optional[_TurnPhase] = None
         self._audio_encoder: Optional[OggOpusStreamEncoder] = None
         self._read_task: Optional[asyncio.Task] = None
         self._connection_id: Optional[str] = None
@@ -308,6 +326,31 @@ class AvatarSession:
                 token_cache_hit=token_cache_hit,
                 error=None,
             )
+
+    async def get_avatar_detail(self) -> AvatarDetail:
+        """Fetch the avatar's expression metadata after ``init()``.
+
+        The first call uses the resolved ingress endpoint and session credentials
+        in HTTP headers, regardless of the WebSocket ``use_query_auth`` option.
+        Successful metadata is cached on this session; concurrent callers share
+        the lookup. This does not open the WebSocket or download avatar assets.
+        A failed or cancelled lookup can be retried by calling this method again.
+        """
+        if not self._session_token:
+            raise ValueError("Session not initialized")
+        if not self._config.ingress_endpoint_url:
+            raise ValueError("Missing ingress endpoint URL")
+        if not self._config.avatar_id:
+            raise ValueError("Missing avatar ID")
+        if not self._config.app_id:
+            raise ValueError("Missing app ID")
+
+        async with self._avatar_detail_lock:
+            if self._avatar_detail is None:
+                self._avatar_detail = await fetch_avatar_detail(
+                    self._config, self._session_token
+                )
+            return self._avatar_detail
 
     def _finish_init_telemetry(
         self,
@@ -373,7 +416,7 @@ class AvatarSession:
         )
         started_at = time.perf_counter()
         try:
-            connection_id = await self._start_internal()
+            connection_id = await self._start_internal(inject_trace_context(span))
         except BaseException as error:
             record_metric(
                 "avatar.session.start.duration",
@@ -392,7 +435,9 @@ class AvatarSession:
         finish_span(span, attributes={"connection_id": connection_id})
         return connection_id
 
-    async def _start_internal(self) -> str:
+    async def _start_internal(
+        self, trace_context: Optional[dict[str, str]] = None
+    ) -> str:
         """
         Open the ingress WebSocket and complete the session handshake.
 
@@ -434,7 +479,7 @@ class AvatarSession:
         query_params = parse_qs(parsed.query)
         query_params["id"] = [self._config.avatar_id]
 
-        # v2 auth: mobile uses headers; web uses query params.
+        # Auth supports headers or query parameters.
         session_key = self._session_token
         headers: dict[str, str] = {}
         if self._config.use_query_auth:
@@ -469,11 +514,11 @@ class AvatarSession:
         except Exception as e:
             raise self._build_websocket_connect_error(e) from e
 
-        # v2 handshake:
+        # Session handshake:
         # 1) client sends ClientConfigureSession
         # 2) server responds with ServerConfirmSession (connection_id) OR ServerError
         try:
-            await self._send_client_configure_session()
+            await self._send_client_configure_session(trace_context)
             server_connection_id = await self._await_server_confirm_session()
         except Exception:
             if self._connection is not None:
@@ -491,76 +536,39 @@ class AvatarSession:
 
         return server_connection_id
 
-    async def _send_client_configure_session(self) -> None:
+    async def _send_client_configure_session(
+        self, trace_context: Optional[dict[str, str]] = None
+    ) -> None:
         if self._connection is None:
             raise ValueError("WebSocket connection is not established")
 
-        # Validate that only one egress mode is configured
-        if (
-            self._config.livekit_egress is not None
-            and self._config.agora_egress is not None
-        ):
-            raise ValueError(
-                "Cannot configure both livekit_egress and agora_egress at the same time"
-            )
-
         msg = message_pb2.Message()
         msg.type = message_pb2.MESSAGE_CLIENT_CONFIGURE_SESSION
-        msg.client_configure_session.sample_rate = int(self._config.sample_rate)
-        msg.client_configure_session.bitrate = int(self._config.bitrate)
-        msg.client_configure_session.audio_format = self._proto_audio_format(
-            self._config.audio_format
-        )
-        msg.client_configure_session.transport_compression = (
-            message_pb2.TRANSPORT_COMPRESSION_NONE
-        )
-        if self._config.extra_params:
-            msg.client_configure_session.extra_params.update(self._config.extra_params)
+        config = msg.client_configure_session
+        config.audio_sample_rate = int(self._config.sample_rate)
+        config.audio_format = self._proto_audio_format(self._config.audio_format)
+        config.extra_params.update(self._config.extra_params)
+        if trace_context:
+            config.trace_context.traceparent = trace_context.get("traceparent", "")
+            config.trace_context.tracestate = trace_context.get("tracestate", "")
 
-        # Add LiveKit egress configuration if provided
-        if self._config.livekit_egress is not None:
-            msg.client_configure_session.egress_type = message_pb2.EGRESS_TYPE_LIVEKIT
-            msg.client_configure_session.livekit_egress.url = (
-                self._config.livekit_egress.url
-            )
-            msg.client_configure_session.livekit_egress.api_key = (
-                self._config.livekit_egress.api_key
-            )
-            msg.client_configure_session.livekit_egress.api_secret = (
-                self._config.livekit_egress.api_secret
-            )
-            msg.client_configure_session.livekit_egress.api_token = (
-                self._config.livekit_egress.api_token
-            )
-            msg.client_configure_session.livekit_egress.room_name = (
-                self._config.livekit_egress.room_name
-            )
-            msg.client_configure_session.livekit_egress.publisher_id = (
-                self._config.livekit_egress.publisher_id
-            )
-            if self._config.livekit_egress.extra_attributes:
-                msg.client_configure_session.livekit_egress.extra_attributes.update(
-                    self._config.livekit_egress.extra_attributes
-                )
-            msg.client_configure_session.livekit_egress.idle_timeout = int(
-                self._config.livekit_egress.idle_timeout
-            )
-
-        # Add Agora egress configuration if provided
-        if self._config.agora_egress is not None:
-            msg.client_configure_session.egress_type = message_pb2.EGRESS_TYPE_AGORA
-            msg.client_configure_session.agora_egress.channel_name = (
-                self._config.agora_egress.channel_name
-            )
-            msg.client_configure_session.agora_egress.token = (
-                self._config.agora_egress.token
-            )
-            msg.client_configure_session.agora_egress.uid = (
-                self._config.agora_egress.uid
-            )
-            msg.client_configure_session.agora_egress.publisher_id = (
-                self._config.agora_egress.publisher_id
-            )
+        transport = self._config.transport
+        if isinstance(transport, WebSocketTransportConfig):
+            config.transport.websocket.SetInParent()
+        elif isinstance(transport, LiveKitTransportConfig):
+            livekit = config.transport.livekit
+            livekit.url = transport.url
+            livekit.token = transport.token
+            livekit.idle_timeout = transport.idle_timeout
+            livekit.agent_identity = transport.agent_identity
+            livekit.extra_attributes.update(transport.extra_attributes)
+        elif isinstance(transport, AgoraTransportConfig):
+            agora = config.transport.agora
+            agora.channel_name = transport.channel_name
+            agora.token = transport.token
+            agora.uid = transport.uid
+        elif transport is not None:
+            raise ValueError("Unsupported transport configuration")
 
         try:
             await self._connection.send(msg.SerializeToString())
@@ -651,9 +659,9 @@ class AvatarSession:
         )
 
     def _telemetry_egress_type(self) -> str:
-        if self._config.livekit_egress is not None:
+        if isinstance(self._config.transport, LiveKitTransportConfig):
             return "livekit"
-        if self._config.agora_egress is not None:
+        if isinstance(self._config.transport, AgoraTransportConfig):
             return "agora"
         return "websocket"
 
@@ -681,19 +689,18 @@ class AvatarSession:
             attributes["connection_id"] = self._connection_id
         return attributes
 
-    def _start_request_telemetry(self, req_id: str) -> dict[str, str]:
+    def _start_request_telemetry(self, req_id: str) -> None:
         if req_id in self._request_telemetry:
-            return {}
+            return
         span = start_span(
             "driven.request", {**self._telemetry_trace_attributes(), "req_id": req_id}
         )
         if span is None and not telemetry_enabled():
-            return {}
+            return
         self._request_telemetry[req_id] = _RequestTelemetry(
             span=span,
             started_at=time.perf_counter(),
         )
-        return inject_trace_context(span)
 
     def _finish_request_telemetry(
         self,
@@ -741,39 +748,121 @@ class AvatarSession:
         if is_last:
             self._finish_request_telemetry(req_id, end_reason="animation_end")
 
-    async def send_audio(self, audio: bytes, end: bool = False) -> str:
+    async def user_speak_start(self) -> str:
         """
-        Send one audio chunk to the avatar service.
+        Start a conversation turn: the user began speaking.
 
-        Audio bytes must match the session-level ``audio_format`` negotiated during
-        ``start()``. For ``AudioFormat.OGG_OPUS``, callers can either send pre-encoded
-        Ogg Opus bytes directly, or enable ``ogg_opus_encoder`` on the session config so
-        ``send_audio()`` accepts raw PCM input and the SDK encodes it internally.
-
-        Consecutive calls with ``end=False`` share the same request ID. Passing
-        ``end=True`` closes the current request and causes the next ``send_audio()`` call
-        to allocate a new request ID.
-
-        Args:
-            audio: Audio bytes to send. May be empty for the final chunk of a pre-encoded
-                Ogg Opus stream.
-            end: Whether this is the last audio chunk for the current request.
+        The service interrupts the previous turn's reply, so stop sending its audio
+        before calling this.
 
         Returns:
-            Request ID for tracking this audio request.
+            The new turn's request ID, shared by its later events and audio.
+        """
+        req_id = generate_log_id()
+        msg = message_pb2.Message()
+        msg.type = message_pb2.MESSAGE_CLIENT_USER_SPEAK_START
+        msg.client_user_speak_start.req_id = req_id
+        await self._send_turn_event(msg, req_id, action="send user speak start")
+        self._finish_request_telemetry(self._turn_req_id, end_reason="superseded")
+        self._begin_turn(req_id, _TurnPhase.LISTENING)
+        return req_id
+
+    async def user_speak_end(self) -> str:
+        """
+        End the user's speech in the current turn.
+
+        Returns:
+            The turn's request ID.
 
         Raises:
-            ValueError: If connection is not established.
+            ValueError: If the current turn did not start with ``user_speak_start()``.
+        """
+        req_id = self._turn_req_id
+        if req_id is None or self._turn_phase is not _TurnPhase.LISTENING:
+            raise ValueError("user_speak_end must follow user_speak_start")
+        msg = message_pb2.Message()
+        msg.type = message_pb2.MESSAGE_CLIENT_USER_SPEAK_END
+        msg.client_user_speak_end.req_id = req_id
+        await self._send_turn_event(msg, req_id, action="send user speak end")
+        self._turn_phase = _TurnPhase.AWAITING_EXPRESSION
+        return req_id
+
+    async def set_expression(self, expressions: Sequence[Expression]) -> str:
+        """
+        Select the expression for the upcoming spoken reply.
+
+        After ``user_speak_end()`` it continues that turn. Otherwise it opens a new
+        turn for a reply without user speech, such as a greeting. Each turn takes one
+        expression event, before its audio.
+
+        Args:
+            expressions: One or more expressions with unique labels. The first one
+                drives the reply; the rest are delivered to RTC clients.
+
+        Returns:
+            The turn's request ID.
+
+        Raises:
+            ValueError: If the list is invalid, the user is still speaking, or the
+                current turn already has an expression.
+        """
+        selected = validate_expressions(expressions)
+        if self._turn_phase is _TurnPhase.LISTENING:
+            raise ValueError("call user_speak_end before set_expression")
+        if self._turn_phase in (_TurnPhase.READY, _TurnPhase.SPEAKING):
+            raise ValueError("the current turn already has an expression")
+        if self._turn_phase is _TurnPhase.AWAITING_EXPRESSION and self._turn_req_id:
+            req_id = self._turn_req_id
+        else:
+            req_id = generate_log_id()
+        msg = message_pb2.Message()
+        msg.type = message_pb2.MESSAGE_CLIENT_SET_EXPRESSION
+        msg.client_set_expression.req_id = req_id
+        for expression in selected:
+            msg.client_set_expression.expressions.add(
+                label=expression.label, strength=expression.strength
+            )
+        await self._send_turn_event(msg, req_id, action="send expression")
+        if req_id != self._turn_req_id:
+            self._begin_turn(req_id, _TurnPhase.READY)
+        else:
+            self._turn_phase = _TurnPhase.READY
+        return req_id
+
+    async def send_audio(self, audio: bytes, end: bool = False) -> str:
+        """
+        Send one audio chunk of the current turn's spoken reply.
+
+        Call ``set_expression()`` first; every chunk of the reply then shares the
+        turn's request ID. Audio bytes must match the session-level ``audio_format``
+        negotiated during ``start()``. For ``AudioFormat.OGG_OPUS``, callers can
+        either send pre-encoded Ogg Opus bytes directly, or enable
+        ``ogg_opus_encoder`` on the session config so ``send_audio()`` accepts raw
+        PCM input and the SDK encodes it internally.
+
+        Passing ``end=True`` completes the reply's input; the next reply needs a new
+        ``set_expression()``.
+
+        Args:
+            audio: Audio bytes to send. May be empty for the final chunk, for both
+                PCM and Ogg Opus.
+            end: Whether this is the last audio chunk of the reply.
+
+        Returns:
+            The turn's request ID.
+
+        Raises:
+            ValueError: If the connection is not established, or the current turn
+                has no expression yet or has already ended its audio.
         """
         if self._connection is None:
             raise ValueError("WebSocket connection is not established")
-
-        # Generate or reuse request ID
-        if not self._current_req_id:
-            self._current_req_id = generate_log_id()
-            self._last_req_id = self._current_req_id
-
-        req_id = self._current_req_id
+        req_id = self._turn_req_id
+        if req_id is None or self._turn_phase not in (
+            _TurnPhase.READY,
+            _TurnPhase.SPEAKING,
+        ):
+            raise ValueError("call set_expression before sending a reply's audio")
 
         encoded_stream: Optional[bytes] = None
         payload = audio
@@ -787,23 +876,13 @@ class AvatarSession:
         if use_internal_encoder and not payload and not end:
             return req_id
 
-        # Create a request span immediately before the first transmitted audio
-        # chunk, then propagate its W3C context to the backend once per req_id.
-        trace_context = self._start_request_telemetry(req_id)
+        self._start_request_telemetry(req_id)
 
         msg = message_pb2.Message()
         msg.type = message_pb2.MESSAGE_CLIENT_AUDIO_INPUT
         msg.client_audio_input.req_id = req_id
         msg.client_audio_input.audio = payload
         msg.client_audio_input.end = end
-        if trace_context.get("traceparent"):
-            msg.client_audio_input.trace_context.traceparent = trace_context[
-                "traceparent"
-            ]
-        if trace_context.get("tracestate"):
-            msg.client_audio_input.trace_context.tracestate = trace_context[
-                "tracestate"
-            ]
 
         # Serialize and send
         data = msg.SerializeToString()
@@ -828,11 +907,29 @@ class AvatarSession:
         if encoded_stream is not None:
             self._notify_encoded_audio(req_id, encoded_stream)
 
+        self._turn_phase = _TurnPhase.FINISHED if end else _TurnPhase.SPEAKING
         if end:
-            self._current_req_id = None
             self._audio_encoder = None
 
         return req_id
+
+    def _begin_turn(self, req_id: str, phase: _TurnPhase) -> None:
+        self._turn_req_id = req_id
+        self._turn_phase = phase
+        # an Ogg Opus stream belongs to one reply
+        self._audio_encoder = None
+
+    async def _send_turn_event(
+        self, msg: message_pb2.Message, req_id: str, *, action: str
+    ) -> None:
+        if self._connection is None:
+            raise ValueError("WebSocket connection is not established")
+        try:
+            await self._connection.send(msg.SerializeToString())
+        except Exception as e:
+            raise self._build_transport_error(
+                e, phase="websocket_send", action=action, req_id=req_id
+            ) from e
 
     def _uses_internal_ogg_opus_encoder(self) -> bool:
         return (
@@ -877,23 +974,21 @@ class AvatarSession:
 
     async def interrupt(self) -> str:
         """
-        Send an interrupt signal for the most recent audio request.
+        Interrupt the current turn's reply.
 
-        Interrupt is intended for egress sessions where generation may continue after the
-        client has sent the final audio chunk. The SDK tracks the last request ID even
-        after ``send_audio(..., end=True)`` so it can interrupt that in-flight request.
+        Generation may continue after the client has sent the final audio chunk, so
+        this targets the latest turn even after ``send_audio(..., end=True)``.
 
         Returns:
             The request ID that was interrupted.
 
         Raises:
-            ValueError: If connection is not established or no request to interrupt.
+            ValueError: If connection is not established or no turn to interrupt.
         """
         if self._connection is None:
             raise ValueError("interrupt: websocket connection is not established")
 
-        # Use last_req_id which tracks the most recent request, even after end=True
-        req_id = self._last_req_id
+        req_id = self._turn_req_id
         if not req_id:
             raise ValueError("interrupt: no request to interrupt")
 
@@ -920,8 +1015,8 @@ class AvatarSession:
 
         self._finish_request_telemetry(req_id, end_reason="interrupted")
 
-        # Clear current request ID so next send_audio creates a new one
-        self._current_req_id = None
+        # the next reply needs a new turn
+        self._turn_phase = _TurnPhase.FINISHED
         self._audio_encoder = None
 
         return req_id
@@ -956,6 +1051,8 @@ class AvatarSession:
                 self._connection = None
 
         self._audio_encoder = None
+        self._turn_req_id = None
+        self._turn_phase = None
 
         if self._read_task is not None:
             # If we're calling close() from inside the read task itself (e.g. the
@@ -1026,9 +1123,18 @@ class AvatarSession:
             )
             return
 
-        if envelope.type == message_pb2.MESSAGE_SERVER_RESPONSE_ANIMATION:
-            req_id = envelope.server_response_animation.req_id
-            is_last = bool(envelope.server_response_animation.end)
+        if envelope.type == message_pb2.MESSAGE_SERVER_RESPONSE_MOTION:
+            if envelope.WhichOneof("data") != "server_response_motion":
+                self._notify_error(
+                    AvatarSDKError(
+                        code=AvatarSDKErrorCode.protocolError,
+                        message="Motion response is missing its payload",
+                        phase="websocket_runtime",
+                    )
+                )
+                return
+            req_id = envelope.server_response_motion.req_id
+            is_last = bool(envelope.server_response_motion.end)
             self._record_animation_telemetry(req_id, is_last=is_last)
             if self._config.transport_frames:
                 # payload is already immutable bytes from the read loop; the

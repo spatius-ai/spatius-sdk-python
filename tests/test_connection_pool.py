@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from unittest.mock import patch
 
+from spatius import AvatarDetail
 from spatius.proto.generated import message_pb2
 
 
@@ -68,12 +69,12 @@ def _mk_confirm(connection_id: str) -> bytes:
 
 
 def _mk_animation_frame(req_id: str, end: bool = False) -> bytes:
-    """Create a ServerResponseAnimation message."""
+    """Create a ServerResponseMotion message."""
     m = message_pb2.Message()
-    m.type = message_pb2.MESSAGE_SERVER_RESPONSE_ANIMATION
-    m.server_response_animation.connection_id = "cid"
-    m.server_response_animation.req_id = req_id
-    m.server_response_animation.end = end
+    m.type = message_pb2.MESSAGE_SERVER_RESPONSE_MOTION
+    m.server_response_motion.connection_id = "cid"
+    m.server_response_motion.req_id = req_id
+    m.server_response_motion.end = end
     return m.SerializeToString()
 
 
@@ -508,6 +509,9 @@ class TestConcurrentAudioProcessing(unittest.IsolatedAsyncioTestCase):
             session_ttl_minutes=5,
         )
 
+        async def fake_avatar_detail(self):
+            return AvatarDetail(("neutral", "happy"), "neutral")
+
         with (
             patch("spatius.avatar_session.websockets.connect", new=fake_connect),
             patch("spatius.avatar_session.asyncio.create_task", new=fake_create_task),
@@ -526,7 +530,11 @@ class TestConcurrentAudioProcessing(unittest.IsolatedAsyncioTestCase):
         frame_task = asyncio.create_task(send_frames())
 
         audio = b"test audio data"
-        result = await process_audio_request(pool, audio, 0)
+        with patch(
+            "spatius.avatar_session.AvatarSession.get_avatar_detail",
+            new=fake_avatar_detail,
+        ):
+            result = await process_audio_request(pool, audio, 0)
 
         await frame_task
 

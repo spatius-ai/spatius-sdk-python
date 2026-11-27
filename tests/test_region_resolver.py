@@ -345,7 +345,7 @@ class TestInitRegionResolution(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             session.config.ingress_endpoint_url,
-            "wss://api.eu-central.spatius.ai/v2/driveningress",
+            "wss://api.eu-central.spatius.ai/v3/driveningress",
         )
 
     async def test_init_bootstrap_failure_falls_back_and_still_inits(self):
@@ -368,7 +368,7 @@ class TestInitRegionResolution(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             session.config.ingress_endpoint_url,
-            "wss://api.us-west.spatius.ai/v2/driveningress",
+            "wss://api.us-west.spatius.ai/v3/driveningress",
         )
 
     async def test_init_skips_bootstrap_for_concrete_region(self):
@@ -393,7 +393,7 @@ class TestInitRegionResolution(unittest.IsolatedAsyncioTestCase):
     async def test_init_skips_bootstrap_for_explicit_urls(self):
         session = self._mk_session(
             console_endpoint_url="https://console.example.com/v1/console",
-            ingress_endpoint_url="wss://api.example.com/v2/driveningress",
+            ingress_endpoint_url="wss://api.example.com/v3/driveningress",
         )
 
         async def fail_fetch(**_kwargs):
@@ -412,7 +412,7 @@ class TestInitRegionResolution(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             session.config.ingress_endpoint_url,
-            "wss://api.example.com/v2/driveningress",
+            "wss://api.example.com/v3/driveningress",
         )
 
     async def test_init_partial_explicit_urls_compose_rest_from_default_region(self):
@@ -433,7 +433,7 @@ class TestInitRegionResolution(unittest.IsolatedAsyncioTestCase):
         # Historical behavior: the missing ingress URL falls back to us-west.
         self.assertEqual(
             session.config.ingress_endpoint_url,
-            "wss://api.us-west.spatius.ai/v2/driveningress",
+            "wss://api.us-west.spatius.ai/v3/driveningress",
         )
 
     async def test_explicit_region_composes_urls_at_construction(self):
@@ -444,7 +444,7 @@ class TestInitRegionResolution(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             session.config.ingress_endpoint_url,
-            "wss://api.cn-beijing.spatialwalk.top/v2/driveningress",
+            "wss://api.cn-beijing.spatialwalk.top/v3/driveningress",
         )
 
 
